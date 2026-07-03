@@ -41,7 +41,6 @@ import { InstructionContext } from "./instruction-context"
 import { SystemContextBuiltIns } from "./system-context/builtins"
 import { SessionContextEntry } from "./session/context-entry"
 import { SessionInstructions } from "./session/instructions"
-import { BuiltInTools } from "./tool/builtins"
 import { McpTool } from "./tool/mcp"
 import { ReadToolFileSystem } from "./tool/read-filesystem"
 import { ToolRegistry } from "./tool/registry"
@@ -89,7 +88,6 @@ export const locationServices = LayerNode.group([
   QuestionV2.node,
   Generate.node,
   ReadToolFileSystem.node,
-  BuiltInTools.node,
   McpTool.node,
   SessionInstructions.node,
   SessionRunnerModel.node,
@@ -111,6 +109,10 @@ export function buildLocationServiceMap(
     LayerMap.make(
       (ref: Location.Ref) => {
         const allReplacements = replacements.concat([[Location.node, Location.boundNode(ref)]])
+        // Apply replacements during hoist, not afterward: replacements can
+        // introduce new tagged dependencies (Location.boundNode depends on
+        // Project), and the hoist walk is the only pass that can still slice
+        // those back out.
         const location = LayerNode.hoist(locationServices, Node.tags.values.global, allReplacements)
 
         return LayerNode.compile(location.node).pipe(

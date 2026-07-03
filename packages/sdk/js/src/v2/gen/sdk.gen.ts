@@ -422,6 +422,8 @@ import type {
   V2SessionRevertCommitResponses,
   V2SessionRevertStageErrors,
   V2SessionRevertStageResponses,
+  V2SessionShellErrors,
+  V2SessionShellResponses,
   V2SessionSkillErrors,
   V2SessionSkillResponses,
   V2SessionSwitchAgentErrors,
@@ -444,6 +446,10 @@ import type {
   V2ShellRemoveResponses,
   V2SkillListErrors,
   V2SkillListResponses,
+  V2VcsDiffErrors,
+  V2VcsDiffResponses,
+  V2VcsStatusErrors,
+  V2VcsStatusResponses,
   VcsApplyErrors,
   VcsApplyResponses,
   VcsDiffErrors,
@@ -452,6 +458,7 @@ import type {
   VcsDiffResponses,
   VcsGetErrors,
   VcsGetResponses,
+  VcsMode2,
   VcsStatusErrors,
   VcsStatusResponses,
   WorktreeCreateErrors,
@@ -6236,6 +6243,43 @@ export class Session3 extends HeyApiClient {
   }
 
   /**
+   * Run shell command
+   *
+   * Execute one shell command in the session's working directory. Emits a shell.started event before execution and a shell.ended event with the merged output after.
+   */
+  public shell<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      id?: string | null
+      command?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "body", key: "id" },
+            { in: "body", key: "command" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<V2SessionShellResponses, V2SessionShellErrors, ThrowOnError>({
+      url: "/api/session/{sessionID}/shell",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
    * Compact session
    *
    * Compact a session conversation.
@@ -7933,6 +7977,65 @@ export class ProjectCopy2 extends HeyApiClient {
   }
 }
 
+export class Vcs2 extends HeyApiClient {
+  /**
+   * VCS status
+   *
+   * List uncommitted working-copy changes relative to the requested location.
+   */
+  public status<ThrowOnError extends boolean = false>(
+    parameters?: {
+      location?: {
+        directory?: string | null
+        workspace?: string | null
+      } | null
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "location" }] }])
+    return (options?.client ?? this.client).get<V2VcsStatusResponses, V2VcsStatusErrors, ThrowOnError>({
+      url: "/api/vcs/status",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * VCS diff
+   *
+   * Diff the working copy against HEAD (mode git) or the default-branch merge base (mode branch) for the requested location.
+   */
+  public diff<ThrowOnError extends boolean = false>(
+    parameters: {
+      location?: {
+        directory?: string | null
+        workspace?: string | null
+      } | null
+      mode: VcsMode2
+      context?: string | null
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "location" },
+            { in: "query", key: "mode" },
+            { in: "query", key: "context" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<V2VcsDiffResponses, V2VcsDiffErrors, ThrowOnError>({
+      url: "/api/vcs/diff",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class V2 extends HeyApiClient {
   private _health?: Health
   get health(): Health {
@@ -8047,6 +8150,11 @@ export class V2 extends HeyApiClient {
   private _projectCopy?: ProjectCopy2
   get projectCopy(): ProjectCopy2 {
     return (this._projectCopy ??= new ProjectCopy2({ client: this.client }))
+  }
+
+  private _vcs?: Vcs2
+  get vcs(): Vcs2 {
+    return (this._vcs ??= new Vcs2({ client: this.client }))
   }
 }
 

@@ -2928,14 +2928,14 @@ export type SessionDurableEvent =
   | SessionNextStepFailed
   | SessionNextTextStarted
   | SessionNextTextEnded
+  | SessionNextReasoningStarted
+  | SessionNextReasoningEnded
   | SessionNextToolInputStarted
   | SessionNextToolInputEnded
   | SessionNextToolCalled
   | SessionNextToolProgress
   | SessionNextToolSuccess
   | SessionNextToolFailed
-  | SessionNextReasoningStarted
-  | SessionNextReasoningEnded
   | SessionNextRetried
   | SessionNextCompactionStarted
   | SessionNextCompactionEnded
@@ -3020,11 +3020,6 @@ export type SessionStatus2 = {
     [key: string]: unknown
   }
   type: "session.status"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     sessionID: string
@@ -3038,11 +3033,6 @@ export type QuestionReplied2 = {
     [key: string]: unknown
   }
   type: "question.replied"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     sessionID: string
@@ -3057,11 +3047,6 @@ export type QuestionRejected2 = {
     [key: string]: unknown
   }
   type: "question.rejected"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     sessionID: string
@@ -3192,6 +3177,13 @@ export type ProjectCopyError = {
     message: string
     forceRequired?: boolean
   }
+}
+
+export type VcsFileStatus2 = {
+  file: string
+  additions: number
+  deletions: number
+  status: "added" | "deleted" | "modified"
 }
 
 export type EffectHttpApiErrorForbidden = {
@@ -3533,7 +3525,7 @@ export type FormAnswer = {
   [key: string]: FormValue
 }
 
-export type ProjectVcs = "git"
+export type ProjectVcs = "git" | "hg"
 
 export type ProjectIcon = {
   url?: string
@@ -4627,7 +4619,7 @@ export type SessionNextAgentSwitched = {
     [key: string]: unknown
   }
   type: "session.next.agent.switched"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4647,7 +4639,7 @@ export type SessionNextModelSwitched = {
     [key: string]: unknown
   }
   type: "session.next.model.switched"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4667,7 +4659,7 @@ export type SessionNextMoved = {
     [key: string]: unknown
   }
   type: "session.next.moved"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4687,7 +4679,7 @@ export type SessionNextRenamed = {
     [key: string]: unknown
   }
   type: "session.next.renamed"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4706,7 +4698,7 @@ export type SessionNextForked = {
     [key: string]: unknown
   }
   type: "session.next.forked"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4726,7 +4718,7 @@ export type SessionNextPrompted = {
     [key: string]: unknown
   }
   type: "session.next.prompted"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4747,7 +4739,7 @@ export type SessionNextPromptAdmitted = {
     [key: string]: unknown
   }
   type: "session.next.prompt.admitted"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4768,7 +4760,7 @@ export type SessionNextContextUpdated = {
     [key: string]: unknown
   }
   type: "session.next.context.updated"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4788,7 +4780,7 @@ export type SessionNextSynthetic = {
     [key: string]: unknown
   }
   type: "session.next.synthetic"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4812,7 +4804,7 @@ export type SessionNextSkillActivated = {
     [key: string]: unknown
   }
   type: "session.next.skill.activated"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4833,7 +4825,7 @@ export type SessionNextShellStarted = {
     [key: string]: unknown
   }
   type: "session.next.shell.started"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4854,7 +4846,7 @@ export type SessionNextShellEnded = {
     [key: string]: unknown
   }
   type: "session.next.shell.ended"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4874,7 +4866,7 @@ export type SessionNextStepStarted = {
     [key: string]: unknown
   }
   type: "session.next.step.started"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4896,7 +4888,7 @@ export type SessionNextStepEnded = {
     [key: string]: unknown
   }
   type: "session.next.step.ended"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4928,7 +4920,7 @@ export type SessionNextStepFailed = {
     [key: string]: unknown
   }
   type: "session.next.step.failed"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4948,7 +4940,7 @@ export type SessionNextTextStarted = {
     [key: string]: unknown
   }
   type: "session.next.text.started"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4968,7 +4960,7 @@ export type SessionNextTextEnded = {
     [key: string]: unknown
   }
   type: "session.next.text.ended"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -4983,13 +4975,56 @@ export type SessionNextTextEnded = {
   }
 }
 
+export type SessionNextReasoningStarted = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.next.reasoning.started"
+  durable: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    timestamp: number
+    sessionID: string
+    assistantMessageID: string
+    reasoningID: string
+    providerMetadata?: LlmProviderMetadata
+  }
+}
+
+export type SessionNextReasoningEnded = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.next.reasoning.ended"
+  durable: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    timestamp: number
+    sessionID: string
+    assistantMessageID: string
+    reasoningID: string
+    text: string
+    providerMetadata?: LlmProviderMetadata
+  }
+}
+
 export type SessionNextToolInputStarted = {
   id: string
   metadata?: {
     [key: string]: unknown
   }
   type: "session.next.tool.input.started"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5010,7 +5045,7 @@ export type SessionNextToolInputEnded = {
     [key: string]: unknown
   }
   type: "session.next.tool.input.ended"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5031,7 +5066,7 @@ export type SessionNextToolCalled = {
     [key: string]: unknown
   }
   type: "session.next.tool.called"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5059,7 +5094,7 @@ export type SessionNextToolProgress = {
     [key: string]: unknown
   }
   type: "session.next.tool.progress"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5083,7 +5118,7 @@ export type SessionNextToolSuccess = {
     [key: string]: unknown
   }
   type: "session.next.tool.success"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5113,7 +5148,7 @@ export type SessionNextToolFailed = {
     [key: string]: unknown
   }
   type: "session.next.tool.failed"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5133,56 +5168,13 @@ export type SessionNextToolFailed = {
   }
 }
 
-export type SessionNextReasoningStarted = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "session.next.reasoning.started"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    reasoningID: string
-    providerMetadata?: LlmProviderMetadata
-  }
-}
-
-export type SessionNextReasoningEnded = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "session.next.reasoning.ended"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    reasoningID: string
-    text: string
-    providerMetadata?: LlmProviderMetadata
-  }
-}
-
 export type SessionNextRetried = {
   id: string
   metadata?: {
     [key: string]: unknown
   }
   type: "session.next.retried"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5202,7 +5194,7 @@ export type SessionNextCompactionStarted = {
     [key: string]: unknown
   }
   type: "session.next.compaction.started"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5222,7 +5214,7 @@ export type SessionNextCompactionEnded = {
     [key: string]: unknown
   }
   type: "session.next.compaction.ended"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5244,7 +5236,7 @@ export type SessionNextRevertStaged = {
     [key: string]: unknown
   }
   type: "session.next.revert.staged"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5263,7 +5255,7 @@ export type SessionNextRevertCleared = {
     [key: string]: unknown
   }
   type: "session.next.revert.cleared"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5281,7 +5273,7 @@ export type SessionNextRevertCommitted = {
     [key: string]: unknown
   }
   type: "session.next.revert.committed"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5627,11 +5619,6 @@ export type ModelsDevRefreshed = {
     [key: string]: unknown
   }
   type: "models-dev.refreshed"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     [key: string]: unknown
@@ -5644,11 +5631,6 @@ export type IntegrationUpdated = {
     [key: string]: unknown
   }
   type: "integration.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     [key: string]: unknown
@@ -5661,11 +5643,6 @@ export type IntegrationConnectionUpdated = {
     [key: string]: unknown
   }
   type: "integration.connection.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     integrationID: string
@@ -5678,11 +5655,6 @@ export type CatalogUpdated = {
     [key: string]: unknown
   }
   type: "catalog.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     [key: string]: unknown
@@ -5695,11 +5667,6 @@ export type AgentUpdated = {
     [key: string]: unknown
   }
   type: "agent.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     [key: string]: unknown
@@ -5712,7 +5679,7 @@ export type SessionCreated = {
     [key: string]: unknown
   }
   type: "session.created"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5730,7 +5697,7 @@ export type SessionUpdated = {
     [key: string]: unknown
   }
   type: "session.updated"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5748,7 +5715,7 @@ export type SessionDeleted = {
     [key: string]: unknown
   }
   type: "session.deleted"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5766,7 +5733,7 @@ export type MessageUpdated = {
     [key: string]: unknown
   }
   type: "message.updated"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5784,7 +5751,7 @@ export type MessageRemoved = {
     [key: string]: unknown
   }
   type: "message.removed"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5802,7 +5769,7 @@ export type MessagePartUpdated = {
     [key: string]: unknown
   }
   type: "message.part.updated"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5821,7 +5788,7 @@ export type MessagePartRemoved = {
     [key: string]: unknown
   }
   type: "message.part.removed"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -5840,11 +5807,6 @@ export type SessionNextExecutionSettled = {
     [key: string]: unknown
   }
   type: "session.next.execution.settled"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     timestamp: number
@@ -5860,11 +5822,6 @@ export type SessionNextTextDelta = {
     [key: string]: unknown
   }
   type: "session.next.text.delta"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     timestamp: number
@@ -5881,11 +5838,6 @@ export type SessionNextReasoningDelta = {
     [key: string]: unknown
   }
   type: "session.next.reasoning.delta"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     timestamp: number
@@ -5902,11 +5854,6 @@ export type SessionNextToolInputDelta = {
     [key: string]: unknown
   }
   type: "session.next.tool.input.delta"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     timestamp: number
@@ -5923,11 +5870,6 @@ export type SessionNextCompactionDelta = {
     [key: string]: unknown
   }
   type: "session.next.compaction.delta"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     timestamp: number
@@ -5943,11 +5885,6 @@ export type MessagePartDelta = {
     [key: string]: unknown
   }
   type: "message.part.delta"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     sessionID: string
@@ -5964,11 +5901,6 @@ export type SessionDiff = {
     [key: string]: unknown
   }
   type: "session.diff"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     sessionID: string
@@ -5982,11 +5914,6 @@ export type SessionError = {
     [key: string]: unknown
   }
   type: "session.error"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     sessionID?: string
@@ -6008,11 +5935,6 @@ export type InstallationUpdated = {
     [key: string]: unknown
   }
   type: "installation.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     version: string
@@ -6025,11 +5947,6 @@ export type InstallationUpdateAvailable = {
     [key: string]: unknown
   }
   type: "installation.update-available"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     version: string
@@ -6042,11 +5959,6 @@ export type FileEdited = {
     [key: string]: unknown
   }
   type: "file.edited"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     file: string
@@ -6059,11 +5971,6 @@ export type ReferenceUpdated = {
     [key: string]: unknown
   }
   type: "reference.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     [key: string]: unknown
@@ -6076,11 +5983,6 @@ export type PermissionV2Asked = {
     [key: string]: unknown
   }
   type: "permission.v2.asked"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     id: string
@@ -6101,11 +6003,6 @@ export type PermissionV2Replied = {
     [key: string]: unknown
   }
   type: "permission.v2.replied"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     sessionID: string
@@ -6120,11 +6017,6 @@ export type PluginAdded = {
     [key: string]: unknown
   }
   type: "plugin.added"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     id: string
@@ -6137,11 +6029,6 @@ export type ProjectDirectoriesUpdated = {
     [key: string]: unknown
   }
   type: "project.directories.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     projectID: string
@@ -6154,11 +6041,6 @@ export type CommandUpdated = {
     [key: string]: unknown
   }
   type: "command.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     [key: string]: unknown
@@ -6171,11 +6053,6 @@ export type SkillUpdated = {
     [key: string]: unknown
   }
   type: "skill.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     [key: string]: unknown
@@ -6188,11 +6065,6 @@ export type FileWatcherUpdated = {
     [key: string]: unknown
   }
   type: "file.watcher.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     file: string
@@ -6206,11 +6078,6 @@ export type PtyCreated = {
     [key: string]: unknown
   }
   type: "pty.created"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     info: Pty
@@ -6223,11 +6090,6 @@ export type PtyUpdated = {
     [key: string]: unknown
   }
   type: "pty.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     info: Pty
@@ -6240,11 +6102,6 @@ export type PtyExited = {
     [key: string]: unknown
   }
   type: "pty.exited"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     id: string
@@ -6258,11 +6115,6 @@ export type PtyDeleted = {
     [key: string]: unknown
   }
   type: "pty.deleted"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     id: string
@@ -6275,11 +6127,6 @@ export type ShellCreated = {
     [key: string]: unknown
   }
   type: "shell.created"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     info: Shell1
@@ -6292,11 +6139,6 @@ export type ShellExited = {
     [key: string]: unknown
   }
   type: "shell.exited"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     id: string
@@ -6311,11 +6153,6 @@ export type ShellDeleted = {
     [key: string]: unknown
   }
   type: "shell.deleted"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     id: string
@@ -6328,11 +6165,6 @@ export type QuestionV2Asked = {
     [key: string]: unknown
   }
   type: "question.v2.asked"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     id: string
@@ -6351,11 +6183,6 @@ export type QuestionV2Replied = {
     [key: string]: unknown
   }
   type: "question.v2.replied"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     sessionID: string
@@ -6370,11 +6197,6 @@ export type QuestionV2Rejected = {
     [key: string]: unknown
   }
   type: "question.v2.rejected"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     sessionID: string
@@ -6418,11 +6240,6 @@ export type FormCreated = {
     [key: string]: unknown
   }
   type: "form.created"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     form: FormFormInfo | FormUrlInfo
@@ -6437,11 +6254,6 @@ export type FormReplied = {
     [key: string]: unknown
   }
   type: "form.replied"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     id: string
@@ -6456,11 +6268,6 @@ export type FormCancelled = {
     [key: string]: unknown
   }
   type: "form.cancelled"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     id: string
@@ -6474,11 +6281,6 @@ export type TodoUpdated = {
     [key: string]: unknown
   }
   type: "todo.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     sessionID: string
@@ -6492,11 +6294,6 @@ export type LspUpdated = {
     [key: string]: unknown
   }
   type: "lsp.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     [key: string]: unknown
@@ -6509,11 +6306,6 @@ export type PermissionAsked = {
     [key: string]: unknown
   }
   type: "permission.asked"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     id: string
@@ -6537,11 +6329,6 @@ export type PermissionReplied = {
     [key: string]: unknown
   }
   type: "permission.replied"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     sessionID: string
@@ -6556,11 +6343,6 @@ export type TuiPromptAppend = {
     [key: string]: unknown
   }
   type: "tui.prompt.append"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     text: string
@@ -6573,11 +6355,6 @@ export type TuiCommandExecute = {
     [key: string]: unknown
   }
   type: "tui.command.execute"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     command:
@@ -6608,11 +6385,6 @@ export type TuiToastShow = {
     [key: string]: unknown
   }
   type: "tui.toast.show"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     title?: string
@@ -6628,11 +6400,6 @@ export type TuiSessionSelect = {
     [key: string]: unknown
   }
   type: "tui.session.select"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     /**
@@ -6648,11 +6415,6 @@ export type McpToolsChanged = {
     [key: string]: unknown
   }
   type: "mcp.tools.changed"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     server: string
@@ -6665,11 +6427,6 @@ export type McpBrowserOpenFailed = {
     [key: string]: unknown
   }
   type: "mcp.browser.open.failed"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     mcpName: string
@@ -6683,11 +6440,6 @@ export type McpStatusChanged = {
     [key: string]: unknown
   }
   type: "mcp.status.changed"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     server: string
@@ -6700,11 +6452,6 @@ export type CommandExecuted = {
     [key: string]: unknown
   }
   type: "command.executed"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     name: string
@@ -6720,11 +6467,6 @@ export type ProjectUpdated = {
     [key: string]: unknown
   }
   type: "project.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     id: string
@@ -6744,11 +6486,6 @@ export type SessionIdle = {
     [key: string]: unknown
   }
   type: "session.idle"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     sessionID: string
@@ -6761,11 +6498,6 @@ export type QuestionAsked = {
     [key: string]: unknown
   }
   type: "question.asked"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     id: string
@@ -6784,11 +6516,6 @@ export type SessionCompacted = {
     [key: string]: unknown
   }
   type: "session.compacted"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     sessionID: string
@@ -6801,11 +6528,6 @@ export type VcsBranchUpdated = {
     [key: string]: unknown
   }
   type: "vcs.branch.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     branch?: string
@@ -6818,11 +6540,6 @@ export type WorkspaceReady = {
     [key: string]: unknown
   }
   type: "workspace.ready"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     name: string
@@ -6835,11 +6552,6 @@ export type WorkspaceFailed = {
     [key: string]: unknown
   }
   type: "workspace.failed"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     message: string
@@ -6852,11 +6564,6 @@ export type WorkspaceStatus = {
     [key: string]: unknown
   }
   type: "workspace.status"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     workspaceID: string
@@ -6870,11 +6577,6 @@ export type WorktreeReady = {
     [key: string]: unknown
   }
   type: "worktree.ready"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     name: string
@@ -6888,11 +6590,6 @@ export type WorktreeFailed = {
     [key: string]: unknown
   }
   type: "worktree.failed"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     message: string
@@ -6905,11 +6602,6 @@ export type ServerConnected = {
     [key: string]: unknown
   }
   type: "server.connected"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     [key: string]: unknown
@@ -6922,11 +6614,6 @@ export type GlobalDisposed = {
     [key: string]: unknown
   }
   type: "global.disposed"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef
   data: {
     [key: string]: unknown
@@ -6992,6 +6679,8 @@ export type ReferenceInfo = {
 export type ProjectCopyCopy = {
   directory: string
 }
+
+export type VcsMode = "working" | "branch"
 
 export type EventModelsDevRefreshed = {
   id: string
@@ -8618,7 +8307,7 @@ export type SessionNextAgentSwitched2 = {
     [key: string]: unknown
   }
   type: "session.next.agent.switched"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8638,7 +8327,7 @@ export type SessionNextModelSwitched2 = {
     [key: string]: unknown
   }
   type: "session.next.model.switched"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8658,7 +8347,7 @@ export type SessionNextMoved2 = {
     [key: string]: unknown
   }
   type: "session.next.moved"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8678,7 +8367,7 @@ export type SessionNextRenamed2 = {
     [key: string]: unknown
   }
   type: "session.next.renamed"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8697,7 +8386,7 @@ export type SessionNextForked2 = {
     [key: string]: unknown
   }
   type: "session.next.forked"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8717,7 +8406,7 @@ export type SessionNextPrompted2 = {
     [key: string]: unknown
   }
   type: "session.next.prompted"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8738,7 +8427,7 @@ export type SessionNextPromptAdmitted2 = {
     [key: string]: unknown
   }
   type: "session.next.prompt.admitted"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8759,7 +8448,7 @@ export type SessionNextContextUpdated2 = {
     [key: string]: unknown
   }
   type: "session.next.context.updated"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8779,7 +8468,7 @@ export type SessionNextSynthetic2 = {
     [key: string]: unknown
   }
   type: "session.next.synthetic"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8803,7 +8492,7 @@ export type SessionNextSkillActivated2 = {
     [key: string]: unknown
   }
   type: "session.next.skill.activated"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8824,7 +8513,7 @@ export type SessionNextShellStarted2 = {
     [key: string]: unknown
   }
   type: "session.next.shell.started"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8845,7 +8534,7 @@ export type SessionNextShellEnded2 = {
     [key: string]: unknown
   }
   type: "session.next.shell.ended"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8865,7 +8554,7 @@ export type SessionNextStepStarted2 = {
     [key: string]: unknown
   }
   type: "session.next.step.started"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8887,7 +8576,7 @@ export type SessionNextStepEnded2 = {
     [key: string]: unknown
   }
   type: "session.next.step.ended"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8919,7 +8608,7 @@ export type SessionNextStepFailed2 = {
     [key: string]: unknown
   }
   type: "session.next.step.failed"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8939,7 +8628,7 @@ export type SessionNextTextStarted2 = {
     [key: string]: unknown
   }
   type: "session.next.text.started"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8959,7 +8648,7 @@ export type SessionNextTextEnded2 = {
     [key: string]: unknown
   }
   type: "session.next.text.ended"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -8974,13 +8663,68 @@ export type SessionNextTextEnded2 = {
   }
 }
 
+export type LlmProviderMetadata3 = {
+  [key: string]: {
+    [key: string]: unknown
+  }
+}
+
+export type SessionNextReasoningStarted2 = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.next.reasoning.started"
+  durable: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef2
+  data: {
+    timestamp: number
+    sessionID: string
+    assistantMessageID: string
+    reasoningID: string
+    providerMetadata?: LlmProviderMetadata3
+  }
+}
+
+export type LlmProviderMetadata4 = {
+  [key: string]: {
+    [key: string]: unknown
+  }
+}
+
+export type SessionNextReasoningEnded2 = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.next.reasoning.ended"
+  durable: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef2
+  data: {
+    timestamp: number
+    sessionID: string
+    assistantMessageID: string
+    reasoningID: string
+    text: string
+    providerMetadata?: LlmProviderMetadata4
+  }
+}
+
 export type SessionNextToolInputStarted2 = {
   id: string
   metadata?: {
     [key: string]: unknown
   }
   type: "session.next.tool.input.started"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -9001,7 +8745,7 @@ export type SessionNextToolInputEnded2 = {
     [key: string]: unknown
   }
   type: "session.next.tool.input.ended"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -9016,7 +8760,7 @@ export type SessionNextToolInputEnded2 = {
   }
 }
 
-export type LlmProviderMetadata3 = {
+export type LlmProviderMetadata5 = {
   [key: string]: {
     [key: string]: unknown
   }
@@ -9028,7 +8772,7 @@ export type SessionNextToolCalled2 = {
     [key: string]: unknown
   }
   type: "session.next.tool.called"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -9045,7 +8789,7 @@ export type SessionNextToolCalled2 = {
     }
     provider: {
       executed: boolean
-      metadata?: LlmProviderMetadata3
+      metadata?: LlmProviderMetadata5
     }
   }
 }
@@ -9056,7 +8800,7 @@ export type SessionNextToolProgress2 = {
     [key: string]: unknown
   }
   type: "session.next.tool.progress"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -9074,7 +8818,7 @@ export type SessionNextToolProgress2 = {
   }
 }
 
-export type LlmProviderMetadata4 = {
+export type LlmProviderMetadata6 = {
   [key: string]: {
     [key: string]: unknown
   }
@@ -9086,7 +8830,7 @@ export type SessionNextToolSuccess2 = {
     [key: string]: unknown
   }
   type: "session.next.tool.success"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -9105,12 +8849,12 @@ export type SessionNextToolSuccess2 = {
     result?: unknown
     provider: {
       executed: boolean
-      metadata?: LlmProviderMetadata4
+      metadata?: LlmProviderMetadata6
     }
   }
 }
 
-export type LlmProviderMetadata5 = {
+export type LlmProviderMetadata7 = {
   [key: string]: {
     [key: string]: unknown
   }
@@ -9122,7 +8866,7 @@ export type SessionNextToolFailed2 = {
     [key: string]: unknown
   }
   type: "session.next.tool.failed"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -9137,63 +8881,8 @@ export type SessionNextToolFailed2 = {
     result?: unknown
     provider: {
       executed: boolean
-      metadata?: LlmProviderMetadata5
+      metadata?: LlmProviderMetadata7
     }
-  }
-}
-
-export type LlmProviderMetadata6 = {
-  [key: string]: {
-    [key: string]: unknown
-  }
-}
-
-export type SessionNextReasoningStarted2 = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "session.next.reasoning.started"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef2
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    reasoningID: string
-    providerMetadata?: LlmProviderMetadata6
-  }
-}
-
-export type LlmProviderMetadata7 = {
-  [key: string]: {
-    [key: string]: unknown
-  }
-}
-
-export type SessionNextReasoningEnded2 = {
-  id: string
-  metadata?: {
-    [key: string]: unknown
-  }
-  type: "session.next.reasoning.ended"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
-  location?: LocationRef2
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    reasoningID: string
-    text: string
-    providerMetadata?: LlmProviderMetadata7
   }
 }
 
@@ -9216,7 +8905,7 @@ export type SessionNextRetried2 = {
     [key: string]: unknown
   }
   type: "session.next.retried"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -9236,7 +8925,7 @@ export type SessionNextCompactionStarted2 = {
     [key: string]: unknown
   }
   type: "session.next.compaction.started"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -9256,7 +8945,7 @@ export type SessionNextCompactionEnded2 = {
     [key: string]: unknown
   }
   type: "session.next.compaction.ended"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -9278,7 +8967,7 @@ export type SessionNextRevertStaged2 = {
     [key: string]: unknown
   }
   type: "session.next.revert.staged"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -9297,7 +8986,7 @@ export type SessionNextRevertCleared2 = {
     [key: string]: unknown
   }
   type: "session.next.revert.cleared"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -9315,7 +9004,7 @@ export type SessionNextRevertCommitted2 = {
     [key: string]: unknown
   }
   type: "session.next.revert.committed"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -9346,14 +9035,14 @@ export type SessionDurableEventV2 =
   | SessionNextStepFailed2
   | SessionNextTextStarted2
   | SessionNextTextEnded2
+  | SessionNextReasoningStarted2
+  | SessionNextReasoningEnded2
   | SessionNextToolInputStarted2
   | SessionNextToolInputEnded2
   | SessionNextToolCalled2
   | SessionNextToolProgress2
   | SessionNextToolSuccess2
   | SessionNextToolFailed2
-  | SessionNextReasoningStarted2
-  | SessionNextReasoningEnded2
   | SessionNextRetried2
   | SessionNextCompactionStarted2
   | SessionNextCompactionEnded2
@@ -9880,11 +9569,6 @@ export type ModelsDevRefreshed2 = {
     [key: string]: unknown
   }
   type: "models-dev.refreshed"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data:
     | {
@@ -9899,11 +9583,6 @@ export type IntegrationUpdated2 = {
     [key: string]: unknown
   }
   type: "integration.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data:
     | {
@@ -9918,11 +9597,6 @@ export type IntegrationConnectionUpdated2 = {
     [key: string]: unknown
   }
   type: "integration.connection.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     integrationID: string
@@ -9935,11 +9609,6 @@ export type CatalogUpdated2 = {
     [key: string]: unknown
   }
   type: "catalog.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data:
     | {
@@ -9954,11 +9623,6 @@ export type AgentUpdated2 = {
     [key: string]: unknown
   }
   type: "agent.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data:
     | {
@@ -10044,7 +9708,7 @@ export type SessionCreated2 = {
     [key: string]: unknown
   }
   type: "session.created"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -10062,7 +9726,7 @@ export type SessionUpdated2 = {
     [key: string]: unknown
   }
   type: "session.updated"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -10080,7 +9744,7 @@ export type SessionDeleted2 = {
     [key: string]: unknown
   }
   type: "session.deleted"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -10254,7 +9918,7 @@ export type MessageUpdated2 = {
     [key: string]: unknown
   }
   type: "message.updated"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -10272,7 +9936,7 @@ export type MessageRemoved2 = {
     [key: string]: unknown
   }
   type: "message.removed"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -10553,7 +10217,7 @@ export type MessagePartUpdated2 = {
     [key: string]: unknown
   }
   type: "message.part.updated"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -10572,7 +10236,7 @@ export type MessagePartRemoved2 = {
     [key: string]: unknown
   }
   type: "message.part.removed"
-  durable?: {
+  durable: {
     aggregateID: string
     seq: number
     version: number
@@ -10591,11 +10255,6 @@ export type SessionNextExecutionSettled2 = {
     [key: string]: unknown
   }
   type: "session.next.execution.settled"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     timestamp: number
@@ -10611,11 +10270,6 @@ export type SessionNextTextDelta2 = {
     [key: string]: unknown
   }
   type: "session.next.text.delta"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     timestamp: number
@@ -10632,11 +10286,6 @@ export type SessionNextReasoningDelta2 = {
     [key: string]: unknown
   }
   type: "session.next.reasoning.delta"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     timestamp: number
@@ -10653,11 +10302,6 @@ export type SessionNextToolInputDelta2 = {
     [key: string]: unknown
   }
   type: "session.next.tool.input.delta"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     timestamp: number
@@ -10674,11 +10318,6 @@ export type SessionNextCompactionDelta2 = {
     [key: string]: unknown
   }
   type: "session.next.compaction.delta"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     timestamp: number
@@ -10694,11 +10333,6 @@ export type FileEdited2 = {
     [key: string]: unknown
   }
   type: "file.edited"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     file: string
@@ -10711,11 +10345,6 @@ export type ReferenceUpdated2 = {
     [key: string]: unknown
   }
   type: "reference.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data:
     | {
@@ -10730,11 +10359,6 @@ export type PermissionV2Asked2 = {
     [key: string]: unknown
   }
   type: "permission.v2.asked"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     id: string
@@ -10755,11 +10379,6 @@ export type PermissionV2Replied2 = {
     [key: string]: unknown
   }
   type: "permission.v2.replied"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     sessionID: string
@@ -10774,11 +10393,6 @@ export type PluginAdded2 = {
     [key: string]: unknown
   }
   type: "plugin.added"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     id: string
@@ -10791,11 +10405,6 @@ export type ProjectDirectoriesUpdated2 = {
     [key: string]: unknown
   }
   type: "project.directories.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     projectID: string
@@ -10808,11 +10417,6 @@ export type CommandUpdated2 = {
     [key: string]: unknown
   }
   type: "command.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data:
     | {
@@ -10827,11 +10431,6 @@ export type SkillUpdated2 = {
     [key: string]: unknown
   }
   type: "skill.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data:
     | {
@@ -10846,11 +10445,6 @@ export type FileWatcherUpdated2 = {
     [key: string]: unknown
   }
   type: "file.watcher.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     file: string
@@ -10875,11 +10469,6 @@ export type PtyCreated2 = {
     [key: string]: unknown
   }
   type: "pty.created"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     info: PtyV2
@@ -10892,11 +10481,6 @@ export type PtyUpdated2 = {
     [key: string]: unknown
   }
   type: "pty.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     info: PtyV2
@@ -10909,11 +10493,6 @@ export type PtyExited2 = {
     [key: string]: unknown
   }
   type: "pty.exited"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     id: string
@@ -10927,11 +10506,6 @@ export type PtyDeleted2 = {
     [key: string]: unknown
   }
   type: "pty.deleted"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     id: string
@@ -10962,11 +10536,6 @@ export type ShellCreated2 = {
     [key: string]: unknown
   }
   type: "shell.created"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     info: ShellV2
@@ -10979,11 +10548,6 @@ export type ShellExited2 = {
     [key: string]: unknown
   }
   type: "shell.exited"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     id: string
@@ -10998,11 +10562,6 @@ export type ShellDeleted2 = {
     [key: string]: unknown
   }
   type: "shell.deleted"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     id: string
@@ -11048,11 +10607,6 @@ export type QuestionV2Asked2 = {
     [key: string]: unknown
   }
   type: "question.v2.asked"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     id: string
@@ -11073,11 +10627,6 @@ export type QuestionV2Replied2 = {
     [key: string]: unknown
   }
   type: "question.v2.replied"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     sessionID: string
@@ -11092,11 +10641,6 @@ export type QuestionV2Rejected2 = {
     [key: string]: unknown
   }
   type: "question.v2.rejected"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     sessionID: string
@@ -11203,11 +10747,6 @@ export type FormCreated2 = {
     [key: string]: unknown
   }
   type: "form.created"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     form: FormFormInfo1 | FormUrlInfo1
@@ -11226,11 +10765,6 @@ export type FormReplied2 = {
     [key: string]: unknown
   }
   type: "form.replied"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     id: string
@@ -11245,11 +10779,6 @@ export type FormCancelled2 = {
     [key: string]: unknown
   }
   type: "form.cancelled"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     id: string
@@ -11278,11 +10807,6 @@ export type TodoUpdated2 = {
     [key: string]: unknown
   }
   type: "todo.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     sessionID: string
@@ -11318,11 +10842,6 @@ export type SessionStatusV22 = {
     [key: string]: unknown
   }
   type: "session.status"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     sessionID: string
@@ -11336,11 +10855,6 @@ export type SessionIdle2 = {
     [key: string]: unknown
   }
   type: "session.idle"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     sessionID: string
@@ -11353,11 +10867,6 @@ export type TuiPromptAppend2 = {
     [key: string]: unknown
   }
   type: "tui.prompt.append"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     text: string
@@ -11370,11 +10879,6 @@ export type TuiCommandExecute2 = {
     [key: string]: unknown
   }
   type: "tui.command.execute"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     command:
@@ -11405,11 +10909,6 @@ export type TuiToastShow2 = {
     [key: string]: unknown
   }
   type: "tui.toast.show"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     title?: string
@@ -11425,11 +10924,6 @@ export type TuiSessionSelect2 = {
     [key: string]: unknown
   }
   type: "tui.session.select"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     /**
@@ -11445,11 +10939,6 @@ export type InstallationUpdated2 = {
     [key: string]: unknown
   }
   type: "installation.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     version: string
@@ -11462,11 +10951,6 @@ export type InstallationUpdateAvailable2 = {
     [key: string]: unknown
   }
   type: "installation.update-available"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     version: string
@@ -11479,11 +10963,6 @@ export type VcsBranchUpdated2 = {
     [key: string]: unknown
   }
   type: "vcs.branch.updated"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     branch?: string
@@ -11496,11 +10975,6 @@ export type McpStatusChanged2 = {
     [key: string]: unknown
   }
   type: "mcp.status.changed"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     server: string
@@ -11513,11 +10987,6 @@ export type PermissionAsked2 = {
     [key: string]: unknown
   }
   type: "permission.asked"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     id: string
@@ -11541,11 +11010,6 @@ export type PermissionReplied2 = {
     [key: string]: unknown
   }
   type: "permission.replied"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     sessionID: string
@@ -11599,11 +11063,6 @@ export type QuestionAsked2 = {
     [key: string]: unknown
   }
   type: "question.asked"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     id: string
@@ -11624,11 +11083,6 @@ export type QuestionRepliedV2 = {
     [key: string]: unknown
   }
   type: "question.replied"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     sessionID: string
@@ -11643,11 +11097,6 @@ export type QuestionRejectedV2 = {
     [key: string]: unknown
   }
   type: "question.rejected"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     sessionID: string
@@ -11661,11 +11110,6 @@ export type SessionError2 = {
     [key: string]: unknown
   }
   type: "session.error"
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
-  }
   location?: LocationRef2
   data: {
     sessionID?: string | null
@@ -11686,11 +11130,6 @@ export type V2EventServerConnected = {
   id: string
   metadata?: {
     [key: string]: unknown
-  } | null
-  durable?: {
-    aggregateID: string
-    seq: number
-    version: number
   } | null
   location?: LocationRef2 | null
   type: "server.connected"
@@ -11912,6 +11351,15 @@ export type ProjectCopyErrorV2 = {
     forceRequired?: boolean | null
   }
 }
+
+export type VcsFileStatusV2 = {
+  file: string
+  additions: number
+  deletions: number
+  status: "added" | "deleted" | "modified"
+}
+
+export type VcsMode2 = "working" | "branch"
 
 export type AuthRemoveData = {
   body?: never
@@ -16668,6 +16116,44 @@ export type V2SessionSyntheticResponses = {
 
 export type V2SessionSyntheticResponse = V2SessionSyntheticResponses[keyof V2SessionSyntheticResponses]
 
+export type V2SessionShellData = {
+  body: {
+    id?: string | null
+    command: string
+  }
+  path: {
+    sessionID: string
+  }
+  query?: never
+  url: "/api/session/{sessionID}/shell"
+}
+
+export type V2SessionShellErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestErrorV2
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedErrorV2
+  /**
+   * SessionNotFoundError
+   */
+  404: SessionNotFoundErrorV2
+}
+
+export type V2SessionShellError = V2SessionShellErrors[keyof V2SessionShellErrors]
+
+export type V2SessionShellResponses = {
+  /**
+   * <No Content>
+   */
+  204: void
+}
+
+export type V2SessionShellResponse = V2SessionShellResponses[keyof V2SessionShellResponses]
+
 export type V2SessionCompactData = {
   body?: never
   path: {
@@ -19511,6 +18997,82 @@ export type V2ProjectCopyRefreshResponses = {
 }
 
 export type V2ProjectCopyRefreshResponse = V2ProjectCopyRefreshResponses[keyof V2ProjectCopyRefreshResponses]
+
+export type V2VcsStatusData = {
+  body?: never
+  path?: never
+  query?: {
+    location?: {
+      directory?: string | null
+      workspace?: string | null
+    } | null
+  }
+  url: "/api/vcs/status"
+}
+
+export type V2VcsStatusErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestErrorV2
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedErrorV2
+}
+
+export type V2VcsStatusError = V2VcsStatusErrors[keyof V2VcsStatusErrors]
+
+export type V2VcsStatusResponses = {
+  /**
+   * Success
+   */
+  200: {
+    location: LocationInfo2
+    data: Array<VcsFileStatusV2>
+  }
+}
+
+export type V2VcsStatusResponse = V2VcsStatusResponses[keyof V2VcsStatusResponses]
+
+export type V2VcsDiffData = {
+  body?: never
+  path?: never
+  query: {
+    location?: {
+      directory?: string | null
+      workspace?: string | null
+    } | null
+    mode: VcsMode2
+    context?: string | null
+  }
+  url: "/api/vcs/diff"
+}
+
+export type V2VcsDiffErrors = {
+  /**
+   * InvalidRequestError
+   */
+  400: InvalidRequestErrorV2
+  /**
+   * UnauthorizedError
+   */
+  401: UnauthorizedErrorV2
+}
+
+export type V2VcsDiffError = V2VcsDiffErrors[keyof V2VcsDiffErrors]
+
+export type V2VcsDiffResponses = {
+  /**
+   * Success
+   */
+  200: {
+    location: LocationInfo2
+    data: Array<SnapshotFileDiffV2>
+  }
+}
+
+export type V2VcsDiffResponse = V2VcsDiffResponses[keyof V2VcsDiffResponses]
 
 export type PtyConnectData = {
   body?: never
