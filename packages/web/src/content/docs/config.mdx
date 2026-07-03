@@ -497,25 +497,31 @@ Set your UI theme in `tui.json`.
 
 ### Agents
 
-You can configure specialized agents for specific tasks through the `agent` option.
+You can configure specialized agents for specific tasks through the `agents` option.
 
 ```jsonc title="opencode.jsonc"
 {
   "$schema": "https://opencode.ai/config.json",
-  "agent": {
+  "agents": {
+    "build": {
+      "model": "openai/gpt-5",
+      "fallback": [
+        "openai/gpt-4o",
+        "openai/gpt-4o-mini"
+      ]
+    },
     "code-reviewer": {
       "description": "Reviews code for best practices and potential issues",
       "model": "anthropic/claude-sonnet-4-5",
-      "prompt": "You are a code reviewer. Focus on security, performance, and maintainability.",
-      "tools": {
-        // Disable file modification tools for review-only agent
-        "write": false,
-        "edit": false,
-      },
-    },
-  },
+      "fallback": ["anthropic/claude-haiku-4-5"],
+      "system": "You are a code reviewer. Focus on security, performance, and maintainability.",
+      "mode": "subagent"
+    }
+  }
 }
 ```
+
+`model` selects the primary model for the agent. `fallback` is an optional ordered list of alternate models in the same `provider/model` format. OpenCode tries the primary model first, then falls back through the list in order when the selected model is unavailable or the provider turn fails before any assistant output is emitted.
 
 You can also define agents using markdown files in `~/.config/opencode/agents/` or `.opencode/agents/`. [Learn more here](/docs/agents).
 

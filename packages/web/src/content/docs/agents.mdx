@@ -358,15 +358,21 @@ If you don’t specify a model, primary agents use the [model globally configure
 
 ```json title="opencode.json"
 {
-  "agent": {
+  "agents": {
     "plan": {
-      "model": "anthropic/claude-haiku-4-20250514"
+      "model": "anthropic/claude-haiku-4-20250514",
+      "fallback": [
+        "anthropic/claude-sonnet-4-5",
+        "openai/gpt-4o"
+      ]
     }
   }
 }
 ```
 
 The model ID in your OpenCode config uses the format `provider/model-id`. For example, if you're using [OpenCode Zen](/docs/zen), you would use `opencode/gpt-5.1-codex` for GPT 5.1 Codex.
+
+`fallback` is optional and uses the same `provider/model-id` format. OpenCode tries each fallback in order after the primary model when the selected model cannot be used.
 
 ---
 
