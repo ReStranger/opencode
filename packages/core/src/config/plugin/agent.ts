@@ -21,6 +21,7 @@ const decodeLegacyAgent = Schema.decodeUnknownOption(ConfigAgentV1.Info)
 const decodeConfig = Schema.decodeUnknownOption(Config.Info)
 const agentKeys = new Set([
   "model",
+  "fallback",
   "variant",
   "request",
   "system",
@@ -77,6 +78,14 @@ export const Plugin = define({
               if (item.model !== undefined) {
                 const model = ModelV2.parse(item.model)
                 agent.model = { id: model.modelID, providerID: model.providerID, variant: agent.model?.variant }
+              }
+              if (item.fallback !== undefined) {
+                Object.assign(agent, {
+                  fallback: item.fallback.map((ref) => {
+                    const parsed = ModelV2.parse(ref)
+                    return { id: parsed.modelID, providerID: parsed.providerID }
+                  }),
+                })
               }
               if (item.variant !== undefined && agent.model !== undefined) {
                 agent.model.variant = ModelV2.VariantID.make(item.variant)

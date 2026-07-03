@@ -33,6 +33,8 @@ import { SessionSchema } from "../schema"
 import { SessionStore } from "../store"
 import { SessionTitle } from "../title"
 import { Service } from "./index"
+import { ModelV2 } from "../../model"
+import { SessionMessage } from "../message"
 import { SessionRunnerModel } from "./model"
 import { createLLMEventPublisher } from "./publish-llm-event"
 import { toLLMMessages } from "./to-llm-message"
@@ -165,6 +167,38 @@ const layer = Layer.effect(
         { concurrency: "unbounded" },
       ).pipe(Effect.map(SystemContext.combine))
 
+    const fallbackMessagePattern =
+      /\bunknown model\b|\b(model|deployment)\b.*\b(not found|not available|unavailable|does not exist|unsupported|access denied|insufficient permissions?)\b/i
+
+    // Only model-unavailability failures should switch agents to a fallback model.
+    const isFallbackTrigger = (error: LLMError): boolean => {
+      const reason = error.reason
+      if (reason._tag === "RateLimit" || reason._tag === "QuotaExceeded" || reason._tag === "ProviderInternal")
+        return true
+      if (reason._tag === "InvalidRequest") {
+        if (reason.classification === "context-overflow") return false
+        if (reason.http?.response?.status === 404) return true
+        return fallbackMessagePattern.test(reason.http?.body ?? reason.message)
+      }
+      if (reason._tag === "Authentication") return fallbackMessagePattern.test(reason.http?.body ?? reason.message)
+      return false
+    }
+
+    // Finds the next fallback ref after the current model in the agent's fallback list.
+    // When the current model is not in the fallback list (e.g. the primary model),
+    // returns the first fallback entry.
+    const getNextFallback = (
+      current: ModelV2.Ref | undefined,
+      fallback: readonly ModelV2.Ref[],
+    ): ModelV2.Ref | undefined => {
+      if (!current) return fallback[0]
+      const idx = fallback.findIndex(
+        (f) => f.providerID === current.providerID && f.id === current.id,
+      )
+      if (idx >= 0) return idx < fallback.length - 1 ? fallback[idx + 1] : undefined
+      return fallback[0]
+    }
+
     const runTurnAttempt = Effect.fn("SessionRunner.runTurn")(function* (
       sessionID: SessionSchema.ID,
       promotion: SessionInput.Delivery | undefined,
@@ -195,7 +229,29 @@ const layer = Layer.effect(
         }
         if (promoted > 0) currentStep = 1
       }
-      const resolved = yield* models.resolve(session)
+      const fallbackList = agent.info?.fallback ?? []
+      const resolved = yield* fallbackList.length
+        ? Effect.gen(function* () {
+            const direct = yield* models.resolve(session).pipe(Effect.option)
+            if (Option.isSome(direct)) return direct.value
+            for (const ref of fallbackList) {
+              if (session.model && session.model.providerID === ref.providerID && session.model.id === ref.id) continue
+              const result = yield* models.resolve({ ...session, model: ref }).pipe(Effect.option)
+              if (Option.isSome(result)) {
+                yield* events.publish(SessionEvent.ModelSwitched, {
+                  sessionID: session.id,
+                  messageID: SessionMessage.ID.create(),
+                  timestamp: yield* DateTime.now,
+                  model: ref,
+                })
+                return result.value
+              }
+            }
+            return yield* Effect.fail(
+              new SessionRunnerModel.AllFallbacksExhaustedError({ sessionID: session.id }),
+            )
+          })
+        : models.resolve(session)
       const model = resolved.model
       const entries = yield* SessionHistory.entriesForRunner(db, session.id, checkpoint.baselineSeq)
       const context = entries.map((entry) => entry.message)
@@ -330,7 +386,14 @@ const layer = Layer.effect(
           // error was already recorded from the stream.
           if (overflowFailure) yield* publish(overflowFailure)
           const llmFailure = streamFailure instanceof LLMError ? streamFailure : undefined
-          if (llmFailure && !publisher.hasProviderError()) {
+          const nextFallback =
+            stream._tag === "Failure" &&
+            streamFailure instanceof LLMError &&
+            !publisher.hasAssistantStarted() &&
+            isFallbackTrigger(streamFailure)
+              ? getNextFallback(resolved.ref, fallbackList)
+              : undefined
+          if (llmFailure && !publisher.hasProviderError() && !nextFallback) {
             yield* serialized(publisher.failUnsettledTools("Provider did not return a tool result", true))
             yield* serialized(publisher.failAssistant(llmFailure.reason.message))
           }
@@ -375,6 +438,17 @@ const layer = Layer.effect(
           if (stream._tag === "Success" && !providerFailed)
             yield* serialized(publisher.failUnsettledTools("Provider did not return a tool result", true))
 
+          // Fallback on model-related provider failure before terminal failure.
+          // Only attempt when no assistant output was started, similar to overflow recovery.
+          if (nextFallback) {
+            yield* events.publish(SessionEvent.ModelSwitched, {
+              sessionID: session.id,
+              messageID: SessionMessage.ID.create(),
+              timestamp: yield* DateTime.now,
+              model: nextFallback,
+            })
+            return { _tag: "RestartAfterFallback", step: currentStep } as const
+          }
           if (stream._tag === "Failure") return yield* Effect.failCause(stream.cause)
           if (settled._tag === "Failure" && (toolsInterrupted || infraError !== undefined))
             return yield* Effect.failCause(settled.cause)

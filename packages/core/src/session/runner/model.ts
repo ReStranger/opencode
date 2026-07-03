@@ -27,6 +27,17 @@ export class ModelNotSelectedError extends Schema.TaggedErrorClass<ModelNotSelec
   }
 }
 
+export class AllFallbacksExhaustedError extends Schema.TaggedErrorClass<AllFallbacksExhaustedError>()(
+  "SessionRunnerModel.AllFallbacksExhaustedError",
+  {
+    sessionID: SessionSchema.ID,
+  },
+) {
+  override get message() {
+    return `All fallback models exhausted for session ${this.sessionID}`
+  }
+}
+
 export class ModelUnavailableError extends Schema.TaggedErrorClass<ModelUnavailableError>()(
   "SessionRunnerModel.ModelUnavailableError",
   {
@@ -70,6 +81,7 @@ export type Error =
   | ModelUnavailableError
   | VariantUnavailableError
   | UnsupportedApiError
+  | AllFallbacksExhaustedError
   | Integration.AuthorizationError
 
 export interface Resolved {

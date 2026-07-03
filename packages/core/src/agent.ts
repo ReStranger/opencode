@@ -3,6 +3,7 @@ export * as AgentV2 from "./agent"
 import { makeLocationNode } from "./effect/app-node"
 import { Array, Context, Effect, Layer, Types } from "effect"
 import { Agent } from "@opencode-ai/schema/agent"
+import { Model } from "@opencode-ai/schema/model"
 import { EventV2 } from "./event"
 import { State } from "./state"
 
@@ -13,7 +14,9 @@ export const defaultID = ID.make("build")
 export const Color = Agent.Color
 
 export const Info = Agent.Info
-export type Info = Agent.Info
+export interface Info extends Agent.Info {
+  readonly fallback?: ReadonlyArray<Model.Ref>
+}
 
 export const Event = Agent.Event
 
