@@ -3,7 +3,7 @@
   stdenvNoCC,
   callPackage,
   bun,
-  nodejs,
+  nodejs_26,
   sysctl,
   makeBinaryWrapper,
   models-dev,
@@ -20,7 +20,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   nativeBuildInputs = [
     bun
-    nodejs # for patchShebangs node_modules
+    nodejs_26 # for patchShebangs node_modules
     installShellFiles
     makeBinaryWrapper
     models-dev
@@ -32,6 +32,11 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     substituteInPlace packages/script/src/index.ts \
       --replace-fail 'throw new Error(`This script requires bun@''${expectedBunVersionRange}' \
                      'console.warn(`Warning: This script requires bun@''${expectedBunVersionRange}'
+
+    # Nix builds are network-restricted. Reuse the provided Node binary for SEA packaging
+    # instead of trying to download the exact upstream Node version at build time.
+    substituteInPlace packages/cli/script/build-node.ts \
+      --replace-fail '    if (info.version === NODE_VERSION) return realpath(info.path)' '    return realpath(info.path)'
   '';
 
   configurePhase = ''
@@ -48,13 +53,14 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   env.OPENCODE_DISABLE_MODELS_FETCH = true;
   env.OPENCODE_VERSION = finalAttrs.version;
   env.OPENCODE_CHANNEL = "prod";
+  env.NODE_BIN = "${nodejs_26}/bin/node";
 
   buildPhase = ''
     runHook preBuild
+    cd ../cli
+    bun --bun ./script/build-node.ts --single --skip-install
 
-    cd ./packages/opencode
-    bun --bun ./script/build.ts --single --skip-install
-    bun --bun ./script/schema.ts schema.json
+    cd ../opencode
 
     runHook postBuild
   '';
@@ -62,8 +68,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   installPhase = ''
     runHook preInstall
 
-    install -Dm755 dist/opencode-*/bin/opencode $out/bin/opencode
-    install -Dm644 schema.json $out/share/opencode/schema.json
+    install -Dm755 ../cli/dist/cli-node-*/bin/opencode2-node $out/bin/opencode
 
     wrapProgram $out/bin/opencode \
       --prefix PATH : ${
@@ -75,6 +80,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
           ++ lib.optional stdenvNoCC.hostPlatform.isDarwin sysctl
         )
       }
+
+    ln -s opencode $out/bin/opencode2
 
     runHook postInstall
   '';
@@ -91,11 +98,13 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     writableTmpDirAsHomeHook
   ];
   doInstallCheck = true;
-  versionCheckKeepEnvironment = [ "HOME" "OPENCODE_DISABLE_MODELS_FETCH" ];
+  versionCheckKeepEnvironment = [
+    "HOME"
+    "OPENCODE_DISABLE_MODELS_FETCH"
+  ];
   versionCheckProgramArg = "--version";
 
   passthru = {
-    jsonschema = "${placeholder "out"}/share/opencode/schema.json";
     env = finalAttrs.env;
   };
 
