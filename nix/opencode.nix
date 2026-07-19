@@ -1,8 +1,9 @@
 {
   lib,
+  inputs,
+  pkgs,
   stdenvNoCC,
   callPackage,
-  bun,
   nodejs_26,
   sysctl,
   makeBinaryWrapper,
@@ -19,7 +20,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   inherit node_modules;
 
   nativeBuildInputs = [
-    bun
+    inputs.re-nixpkgs.packages.${pkgs.stdenv.hostPlatform.system}.bun-canary
     nodejs_26 # for patchShebangs node_modules
     installShellFiles
     makeBinaryWrapper

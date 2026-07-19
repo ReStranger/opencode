@@ -3,10 +3,11 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    re-nixpkgs.url = "github:ReStranger/re-nixpkgs";
   };
 
   outputs =
-    { self, nixpkgs, ... }:
+    { self, nixpkgs, re-nixpkgs, ... } @ inputs:
     let
       systems = [
         "aarch64-linux"
@@ -21,7 +22,7 @@
       devShells = forEachSystem (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [
-            bun
+            re-nixpkgs.packages.${pkgs.system}.bun-canary
             nodejs_26
             pkg-config
             openssl
@@ -35,15 +36,15 @@
           final: _prev:
           let
             node_modules = final.callPackage ./nix/node_modules.nix {
-              inherit rev;
+              inherit rev inputs;
             };
           in
           rec {
             opencode = final.callPackage ./nix/opencode.nix {
-              inherit node_modules;
+              inherit node_modules inputs;
             };
             opencode-desktop = final.callPackage ./nix/desktop.nix {
-              inherit opencode;
+              inherit opencode inputs;
             };
           };
       };
@@ -52,16 +53,16 @@
         pkgs:
         let
           node_modules = pkgs.callPackage ./nix/node_modules.nix {
-            inherit rev;
+            inherit rev inputs;
           };
         in
         rec {
           default = opencode;
           opencode = pkgs.callPackage ./nix/opencode.nix {
-            inherit node_modules;
+            inherit node_modules inputs;
           };
           opencode-desktop = pkgs.callPackage ./nix/desktop.nix {
-            inherit opencode;
+            inherit opencode inputs;
           };
           # Updater derivation with fakeHash - build fails and reveals correct hash
           node_modules_updater = node_modules.override {
