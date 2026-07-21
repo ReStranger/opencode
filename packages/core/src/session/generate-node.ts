@@ -3,7 +3,7 @@ export * as SessionGenerateNode from "./generate-node"
 import { LLM, LLMClient, Message, SystemPart } from "@opencode-ai/ai"
 import { Effect, Layer } from "effect"
 import { Database } from "../database/database"
-import { makeLocationNode } from "../effect/app-node"
+import { makeLocationNode } from "@opencode-ai/util/effect/app-node"
 import { llmClient } from "../effect/app-node-platform"
 import { PluginHooks } from "../plugin/hooks"
 import { SessionContext } from "./context"
@@ -14,7 +14,7 @@ import { SessionRunnerModel } from "./runner/model"
 import PROMPT_DEFAULT from "./runner/prompt/base.txt"
 import { toLLMMessages } from "./runner/to-llm-message"
 
-const layer = Layer.effect(
+export const layer = (options?: SessionModelHeaders.Options) => Layer.effect(
   SessionGenerate.Service,
   Effect.gen(function* () {
     const context = yield* SessionContext.Service
@@ -49,7 +49,7 @@ const layer = Layer.effect(
         return (yield* llm.generate(
           LLM.request({
             model: model.model,
-            http: { headers: SessionModelHeaders.make(selection.session) },
+            http: { headers: SessionModelHeaders.make(selection.session, options) },
             providerOptions: { openai: { promptCacheKey } },
             system: contextEvent.system,
             messages: contextEvent.messages,
@@ -62,8 +62,12 @@ const layer = Layer.effect(
   }),
 )
 
-export const node = makeLocationNode({
-  service: SessionGenerate.Service,
-  layer,
-  deps: [SessionContext.node, Database.node, PluginHooks.node, SessionRunnerModel.node, llmClient],
-})
+export function configured(options?: SessionModelHeaders.Options) {
+  return makeLocationNode({
+    service: SessionGenerate.Service,
+    layer: layer(options),
+    deps: [SessionContext.node, Database.node, PluginHooks.node, SessionRunnerModel.node, llmClient],
+  })
+}
+
+export const node = configured()

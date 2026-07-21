@@ -4,7 +4,7 @@ import { OpenAIChat } from "@opencode-ai/ai/protocols"
 import { Config } from "@opencode-ai/core/config"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
-import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { LayerNode } from "@opencode-ai/util/effect/layer-node"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Job } from "@opencode-ai/core/job"
 import { Location } from "@opencode-ai/core/location"
@@ -56,7 +56,7 @@ const locations = Layer.effect(
     () =>
       // The test only needs the compaction location service used by SessionV2.compact.
       // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
-      SessionCompaction.layer.pipe(
+      SessionCompaction.layer().pipe(
         Layer.provide(client),
         Layer.provide(config),
         Layer.provide(models),

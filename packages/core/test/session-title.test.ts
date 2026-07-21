@@ -5,7 +5,7 @@ import { AgentV2 } from "@opencode-ai/core/agent"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { llmClient } from "@opencode-ai/core/effect/app-node-platform"
-import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { LayerNode } from "@opencode-ai/util/effect/layer-node"
 import { EventV2 } from "@opencode-ai/core/event"
 import { SessionEvent } from "@opencode-ai/core/session/event"
 import { SessionMessage } from "@opencode-ai/core/session/message"
@@ -17,8 +17,7 @@ import { SessionTitle } from "@opencode-ai/core/session/title"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { Project } from "@opencode-ai/core/project"
 import { ProjectTable } from "@opencode-ai/core/project/sql"
-import { Flag } from "@opencode-ai/core/flag/flag"
-import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import { InstallationVersion } from "@opencode-ai/util/installation/version"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Money } from "@opencode-ai/schema/money"
 import { Effect, Layer, Stream } from "effect"
@@ -153,7 +152,7 @@ it.effect("generates a title from the sole user message and renames the session"
       "User-Agent": `opencode/${InstallationVersion}`,
       "x-opencode-project": Project.ID.global,
       "x-opencode-session": sessionID,
-      "x-opencode-client": Flag.OPENCODE_CLIENT,
+      "x-opencode-client": "cli",
     })
     expect(JSON.stringify(requests[0]?.messages)).toContain("Help me debug the failing build")
     const renamed = yield* store.get(sessionID)

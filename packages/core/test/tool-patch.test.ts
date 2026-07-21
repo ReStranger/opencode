@@ -3,8 +3,8 @@ import path from "path"
 import { describe, expect } from "bun:test"
 import { Effect, Exit, Layer, Schema } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
-import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { FSUtil } from "@opencode-ai/core/fs-util"
+import { LayerNode } from "@opencode-ai/util/effect/layer-node"
+import { FSUtil } from "@opencode-ai/util/fs-util"
 import { Location } from "@opencode-ai/core/location"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { AbsolutePath } from "@opencode-ai/core/schema"
@@ -14,7 +14,7 @@ import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { PatchTool } from "@opencode-ai/core/tool/patch"
 import { location } from "./fixture/location"
 import { tmpdir } from "./fixture/tmpdir"
-import { makeLocationNode } from "@opencode-ai/core/effect/app-node"
+import { makeLocationNode } from "@opencode-ai/util/effect/app-node"
 import { testEffect } from "./lib/effect"
 import { toolIdentity, executeTool, registerToolPlugin, settleTool, toolDefinitions } from "./lib/tool"
 
@@ -392,14 +392,32 @@ describe("PatchTool", () => {
     withTempTool((directory, registry) =>
       Effect.gen(function* () {
         const target = path.join(directory, "tail.txt")
-        yield* Effect.promise(() => fs.writeFile(target, "alpha\nlast\n"))
+        yield* Effect.promise(() => fs.writeFile(target, "first\nsecond"))
         yield* executeTool(
           registry,
           call(
-            "*** Begin Patch\n*** Update File: tail.txt\n@@\n-last\n+end\n*** End of File\n*** End Patch",
+            "*** Begin Patch\n*** Update File: tail.txt\n@@\n first\n-second\n+second updated\n*** End of File\n*** End Patch",
           ),
         )
-        expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe("alpha\nend\n")
+        expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe("first\nsecond updated\n")
+      }),
+    ),
+  )
+
+  it.live("applies an end-of-file chunk to the final duplicate", () =>
+    withTempTool((directory, registry) =>
+      Effect.gen(function* () {
+        const target = path.join(directory, "duplicates.txt")
+        yield* Effect.promise(() => fs.writeFile(target, "marker\nend\nmiddle\nmarker\nend\n"))
+        yield* executeTool(
+          registry,
+          call(
+            "*** Begin Patch\n*** Update File: duplicates.txt\n@@\n-marker\n-end\n+marker changed\n+end\n*** End of File\n*** End Patch",
+          ),
+        )
+        expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe(
+          "marker\nend\nmiddle\nmarker changed\nend\n",
+        )
       }),
     ),
   )
@@ -433,9 +451,13 @@ describe("PatchTool", () => {
   it.live("rejects invalid patch format", () =>
     withTempTool((_directory, registry) =>
       Effect.gen(function* () {
-        expect(yield* executeTool(registry, call("invalid patch"))).toMatchObject({
+        expect(yield* executeTool(registry, call("invalid patch"))).toEqual({
           type: "error",
-          value: expect.stringContaining("patch verification failed"),
+          value: "patch verification failed: The first line of the patch must be '*** Begin Patch'",
+        })
+        expect(yield* executeTool(registry, call("*** Begin Patch\n*** Add File: foo\n+hello"))).toEqual({
+          type: "error",
+          value: "patch verification failed: The last line of the patch must be '*** End Patch'",
         })
       }),
     ),
@@ -460,7 +482,11 @@ describe("PatchTool", () => {
             registry,
             call("*** Begin Patch\n*** Frobnicate File: foo\n*** End Patch"),
           ),
-        ).toEqual({ type: "error", value: "patch verification failed: no hunks found" })
+        ).toEqual({
+          type: "error",
+          value:
+            "patch verification failed: Invalid hunk at line 2: '*** Frobnicate File: foo' is not a valid hunk header. Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'",
+        })
       }),
     ),
   )
@@ -475,6 +501,22 @@ describe("PatchTool", () => {
           call("*** Begin Patch\n*** Update File: multi.txt\n@@\n-b\n+B\n@@\n-d\n+D\n*** End Patch"),
         )
         expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe("a\nB\nc\nD\n")
+      }),
+    ),
+  )
+
+  it.live("applies successive update operations to one file", () =>
+    withTempTool((directory, registry) =>
+      Effect.gen(function* () {
+        const target = path.join(directory, "successive.txt")
+        yield* Effect.promise(() => fs.writeFile(target, "a\nb\n"))
+        yield* executeTool(
+          registry,
+          call(
+            "*** Begin Patch\n*** Update File: successive.txt\n@@\n-a\n+A\n*** Update File: successive.txt\n@@\n-b\n+B\n*** End Patch",
+          ),
+        )
+        expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe("A\nB\n")
       }),
     ),
   )
@@ -623,7 +665,7 @@ describe("PatchTool", () => {
   )
 
   it.live("rejects an update when the target file is missing", () =>
-    withTempTool((_directory, registry) =>
+    withTempTool((directory, registry) =>
       Effect.gen(function* () {
         expect(
           yield* executeTool(
@@ -632,7 +674,23 @@ describe("PatchTool", () => {
           ),
         ).toMatchObject({
           type: "error",
-          value: expect.stringContaining("patch verification failed: Failed to read file to update"),
+          value: expect.stringContaining(
+            `patch verification failed: Failed to read file to update ${path.join(directory, "missing.txt")}: `,
+          ),
+        })
+      }),
+    ),
+  )
+
+  it.live("identifies a directory used as an update target", () =>
+    withTempTool((directory, registry) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() => fs.mkdir(path.join(directory, "nested")))
+        expect(
+          yield* executeTool(registry, call("*** Begin Patch\n*** Update File: nested\n@@\n-old\n+new\n*** End Patch")),
+        ).toEqual({
+          type: "error",
+          value: `patch verification failed: Failed to read file to update ${path.join(directory, "nested")}: path is a directory`,
         })
       }),
     ),

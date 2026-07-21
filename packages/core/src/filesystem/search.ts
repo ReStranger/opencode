@@ -1,12 +1,12 @@
 export * as FileSystemSearch from "./search"
 
-import { makeLocationNode } from "../effect/app-node"
+import { makeLocationNode } from "@opencode-ai/util/effect/app-node"
 import path from "path"
 import { Context, Effect, Layer, Schema, Scope } from "effect"
 import { Fff } from "#fff"
 import fuzzysort from "fuzzysort"
 import { FileSystem } from "../filesystem"
-import { FSUtil } from "../fs-util"
+import { FSUtil } from "@opencode-ai/util/fs-util"
 import { Location } from "../location"
 import { Ripgrep } from "../ripgrep"
 import { RelativePath } from "../schema"
@@ -246,8 +246,8 @@ export const layer = (options?: Options) => Layer.unwrap(
   }),
 )
 
-export function nodeWith(options?: Options) {
+export function configured(options?: Options) {
   return makeLocationNode({ service: Service, layer: layer(options), deps: [FSUtil.node, Location.node, Ripgrep.node] })
 }
 
-export const node = nodeWith()
+export const node = configured()

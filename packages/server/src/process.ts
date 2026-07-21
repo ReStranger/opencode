@@ -1,7 +1,7 @@
 export * as ServerProcess from "./process"
 
 import { NodeHttpServer, NodeHttpServerRequest } from "@effect/platform-node"
-import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import { InstallationVersion } from "@opencode-ai/util/installation/version"
 import { SessionRestart } from "@opencode-ai/core/session/execution/restart"
 import { ServiceStatus } from "@opencode-ai/protocol/groups/health"
 import { hasPtyConnectTicketURL } from "@opencode-ai/protocol/groups/pty"
@@ -10,6 +10,7 @@ import { HttpMiddleware, HttpRouter, HttpServer, HttpServerRequest, HttpServerRe
 import { randomUUID } from "node:crypto"
 import { createServer } from "node:http"
 import { ServerAuth } from "./auth"
+import { isAllowedCorsOrigin } from "./cors"
 import { authorizedRequest } from "./middleware/authorization"
 import { withoutParentSpan } from "./request-tracing"
 import { createRoutes } from "./routes"
@@ -48,7 +49,12 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
   const application = yield* Ref.make(Option.none<App>())
   // Request fibers may continue inbound trace context, but must not inherit the server startup parent.
   yield* bound.http
-    .serve(dispatch(password, status, application, shutdown), HttpMiddleware.logger)
+    .serve(
+      dispatch(password, status, application, shutdown).pipe(
+        HttpMiddleware.cors({ allowedOrigins: isAllowedCorsOrigin, maxAge: 86_400 }),
+      ),
+      HttpMiddleware.logger,
+    )
     .pipe(withoutParentSpan)
   if (lifecycle)
     yield* lifecycle.onListen(bound.http.address, Deferred.succeed(shutdown, undefined).pipe(Effect.asVoid)).pipe(
@@ -148,7 +154,7 @@ function dispatch(
   application: Ref.Ref<Option.Option<App>>,
   shutdown: Deferred.Deferred<void>,
 ): App {
-  const auth = ServerAuth.Config.of({ username: "opencode", password: Option.some(password) })
+  const auth = ServerAuth.Config.of({ password: Option.some(password), username: "opencode" })
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     const url = new URL(request.url, "http://localhost")

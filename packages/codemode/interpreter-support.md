@@ -69,8 +69,10 @@ ultimate source of truth.
 - [x] Unlabeled `break` and `continue`.
 - [x] `try`, `catch`, optional catch bindings, and `finally`.
 - [x] `throw` with arbitrary values.
-- [ ] Labeled statements, labeled `break`, and labeled `continue`.
-- [ ] `for await...of` and async iteration.
+- [x] Labeled statements, labeled `break`, and labeled `continue`.
+- [x] `for await...of` over the supported synchronous collections, awaiting each yielded CodeMode promise or plain
+      value before binding it. Custom sync/async iterator objects, `Symbol.asyncIterator`, and async generators remain
+      outside the supported subset.
 
 ## Functions and callbacks
 
@@ -247,10 +249,15 @@ ultimate source of truth.
 
 - [x] `JSON.parse` and `JSON.stringify` for supported data objects; the blocked data-key gap listed above still applies.
 - [x] Numeric/string indentation for `JSON.stringify`.
+- [x] `JSON.parse` reviver callbacks, including postorder traversal, deletion through `undefined`, and root replacement.
+      Revivers receive `(key, value)` but no `this` holder because CodeMode functions intentionally have no `this`.
+- [x] `JSON.stringify` function and array replacers. Function replacers receive `(key, value)` in preorder, including
+      the root, but no `this` holder. Array replacers preserve requested property order, deduplicate names, coerce
+      number primitives, and ignore non-string/non-number entries. Primitive wrapper entries remain unsupported.
+- [x] JSON callbacks retain the blocked-key boundary: parsed or stringified data containing `__proto__`, `constructor`,
+      or `prototype` is rejected before callback traversal.
 - [x] Captured `console.log`, `console.info`, `console.debug`, `console.warn`, and `console.error`.
 - [x] Captured `console.dir` and `console.table`.
-- [ ] `JSON.parse` reviver callbacks.
-- [ ] `JSON.stringify` function/array replacers.
 
 ## Date
 

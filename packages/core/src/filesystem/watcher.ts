@@ -4,7 +4,7 @@ export * as Watcher from "./watcher"
 import { createWrapper } from "@parcel/watcher/wrapper"
 import type ParcelWatcher from "@parcel/watcher"
 import { FileSystem } from "@opencode-ai/schema/filesystem"
-import { makeGlobalNode } from "../effect/app-node"
+import { makeGlobalNode } from "@opencode-ai/util/effect/app-node"
 import { Cause, Context, Effect, Layer, PubSub, Schema, Scope, Stream } from "effect"
 import { KeyedMutex } from "../effect/keyed-mutex"
 import { lazy } from "../util/lazy"
@@ -144,11 +144,11 @@ export const layer = (options?: Options) => Layer.effect(
   }),
 )
 
-export function nodeWith(options?: Options) {
+export function configured(options?: Options) {
   return makeGlobalNode({ service: Service, layer: layer(options), deps: [] })
 }
 
-export const node = nodeWith()
+export const node = configured()
 
 function subscribeDirectory(
   native: typeof import("@parcel/watcher") | undefined,

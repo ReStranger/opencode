@@ -12,7 +12,6 @@ import { registerOpencodeSpinner } from "../register-spinner"
 import path from "path"
 import { fileURLToPath } from "url"
 import { useLocal } from "../../context/local"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import { useTheme } from "../../context/theme"
 import { tint } from "../../theme/color"
 import { EmptyBorder, SplitBorder } from "../../ui/border"
@@ -53,7 +52,7 @@ import { readLocalAttachment } from "./local-attachment"
 import { useData } from "../../context/data"
 import { useLocation } from "../../context/location"
 import { Keymap, type KeymapCommand } from "../../context/keymap"
-import { contextUsage } from "../../util/session"
+import { contextUsage, formatContextUsage } from "../../util/session"
 import { abbreviateHome } from "../../runtime"
 
 registerOpencodeSpinner()
@@ -313,11 +312,7 @@ export function Prompt(props: PromptProps) {
       session.revert?.messageID,
     )
     return {
-      context: context
-        ? context.percent === undefined
-          ? Locale.number(context.tokens)
-          : `${Locale.number(context.tokens)} (${context.percent}%)`
-        : undefined,
+      context: context ? formatContextUsage(context.tokens, context.percent) : undefined,
       cost: formattedCost,
     }
   })

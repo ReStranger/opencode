@@ -5,7 +5,7 @@ import { Effect, Layer } from "effect"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { Integration } from "@opencode-ai/core/integration"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
-import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { LayerNode } from "@opencode-ai/util/effect/layer-node"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Location } from "@opencode-ai/core/location"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -26,7 +26,7 @@ const layer = AppNodeBuilder.build(LayerNode.group([Catalog.node, Integration.no
 ])
 const it = testEffect(layer)
 const models = (file: string) =>
-  AppNodeBuilder.build(ModelsDev.node, [[ModelsDev.node, ModelsDev.nodeWith({ file, fetch: false })]])
+  AppNodeBuilder.build(ModelsDev.node, [[ModelsDev.node, ModelsDev.configured({ file, fetch: false })]])
 
 describe("ModelsDevPlugin", () => {
   it.effect("projects normalized models.dev snapshots into the catalog", () =>

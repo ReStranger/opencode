@@ -6,9 +6,9 @@ import { FileDiff } from "@opencode-ai/schema/file-diff"
 import { createTwoFilesPatch, diffLines } from "diff"
 import { Effect, Schema } from "effect"
 import path from "path"
-import { FSUtil } from "../fs-util"
+import { FSUtil } from "@opencode-ai/util/fs-util"
 import { Location } from "../location"
-import { Patch } from "../patch"
+import { Patch } from "@opencode-ai/util/patch"
 import { PermissionV2 } from "../permission"
 import { Tool } from "./tool"
 import DESCRIPTION from "./patch.txt"
@@ -97,10 +97,11 @@ export const Plugin = {
                     callID: context.callID,
                   }
                   if (!input.patchText) return yield* new ToolFailure({ message: "patchText is required" })
-                  const hunks = yield* Effect.try({
-                    try: () => Patch.parse(input.patchText),
-                    catch: (cause) => new ToolFailure({ message: `patch verification failed: ${String(cause)}` }),
-                  })
+                  const hunks = yield* Effect.fromResult(Patch.parse(input.patchText)).pipe(
+                    Effect.mapError(
+                      (error) => new ToolFailure({ message: `patch verification failed: ${error.message}` }),
+                    ),
+                  )
                   if (hunks.length === 0) {
                     const normalized = input.patchText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim()
                     if (normalized === "*** Begin Patch\n*** End Patch") {
@@ -110,6 +111,7 @@ export const Plugin = {
                   }
                   const prepared: Prepared[] = []
                   const targets: Target[] = []
+                  const updates = new Map<string, string>()
                   for (const hunk of hunks) {
                     yield* Effect.gen(function* () {
                       const target = resolveTarget(location, hunk.path)
@@ -153,21 +155,38 @@ export const Plugin = {
                         prepared.push({ ...hunk, target, before: original.replace(/^\uFEFF/, ""), after: "" })
                         return
                       }
-                      const stats = yield* fs
-                        .stat(target.canonical)
-                        .pipe(Effect.catch(() => Effect.succeed(undefined)))
-                      if (!stats || stats.type === "Directory") {
-                        return yield* new ToolFailure({
-                          message: `patch verification failed: Failed to read file to update: ${target.canonical}`,
-                        })
-                      }
-                      const content = yield* fs.readFile(target.canonical)
-                      const original = new TextDecoder("utf-8", { ignoreBOM: true }).decode(content)
+                      const previous = updates.get(target.canonical)
+                      const original =
+                        previous ??
+                        (yield* Effect.gen(function* () {
+                          const stats = yield* fs.stat(target.canonical).pipe(
+                            Effect.mapError(
+                              (error) =>
+                                new ToolFailure({
+                                  message: `patch verification failed: Failed to read file to update ${target.canonical}: ${error instanceof Error ? error.message : String(error)}`,
+                                }),
+                            ),
+                          )
+                          if (stats.type === "Directory") {
+                            return yield* new ToolFailure({
+                              message: `patch verification failed: Failed to read file to update ${target.canonical}: path is a directory`,
+                            })
+                          }
+                          return new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+                            yield* fs.readFile(target.canonical).pipe(
+                              Effect.mapError(
+                                (error) =>
+                                  new ToolFailure({
+                                    message: `patch verification failed: Failed to read file to update ${target.canonical}: ${error instanceof Error ? error.message : String(error)}`,
+                                  }),
+                              ),
+                            ),
+                          )
+                        }))
                       const before = original.replace(/^\uFEFF/, "")
                       const update = yield* Effect.try({
                         try: () => Patch.derive(hunk.path, hunk.chunks, original),
-                        catch: (error) =>
-                          new ToolFailure({ message: `patch verification failed: ${String(error)}` }),
+                        catch: (error) => new ToolFailure({ message: `patch verification failed: ${String(error)}` }),
                       })
                       const moveTarget = hunk.movePath ? resolveTarget(location, hunk.movePath) : undefined
                       if (moveTarget?.externalDirectory) {
@@ -192,6 +211,7 @@ export const Plugin = {
                         after: update.content,
                         moveTarget,
                       })
+                      if (!moveTarget) updates.set(target.canonical, Patch.joinBom(update.content, update.bom))
                     }).pipe(Effect.mapError((error) => (error instanceof ToolFailure ? error : fail(hunk.path, error))))
                   }
 

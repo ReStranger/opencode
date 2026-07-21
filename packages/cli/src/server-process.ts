@@ -2,10 +2,10 @@ export * as ServerProcess from "./server-process"
 
 import { NodeServices } from "@effect/platform-node"
 import { Service, type DiscoverOptions, type Info } from "@opencode-ai/client/effect/service"
-import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Global } from "@opencode-ai/core/global"
-import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { AppProcess } from "@opencode-ai/core/process"
+import { LayerNode } from "@opencode-ai/util/effect/layer-node"
+import { Global } from "@opencode-ai/util/global"
+import { InstallationVersion } from "@opencode-ai/util/installation/version"
+import { AppProcess } from "@opencode-ai/util/process"
 import { randomBytes, randomUUID } from "node:crypto"
 import path from "node:path"
 import { Effect, FileSystem, Logger, Option, Redacted, Schedule, Schema } from "effect"
@@ -26,7 +26,14 @@ export type Options = {
 export const run = Effect.fnUntraced(function* (options: Options) {
   return yield* processEffect(options).pipe(
     Effect.provide(Updater.layer),
-    Effect.provide(LayerNode.compile(LayerNode.group([Global.node, AppProcess.node]))),
+    Effect.provide(
+      LayerNode.compile(LayerNode.group([Global.node, AppProcess.node]), [
+        [
+          Global.node,
+          Global.layerWith(process.env.OPENCODE_CONFIG_DIR ? { config: process.env.OPENCODE_CONFIG_DIR } : {}),
+        ],
+      ]),
+    ),
     Effect.provide(NodeServices.layer),
   )
 })
@@ -62,9 +69,11 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
       const instanceID = randomUUID()
       const server = yield* start(
         {
+          client: process.env.OPENCODE_CLIENT ?? "cli",
           hostname,
           port,
           password,
+          simulation: truthy(process.env.OPENCODE_SIMULATE),
           database: {
             path: process.env.OPENCODE_DB,
           },
@@ -76,6 +85,17 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
           observability: {
             endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
             headers: process.env.OTEL_EXPORTER_OTLP_HEADERS,
+          },
+          config: {
+            directory: process.env.OPENCODE_CONFIG_DIR,
+            project: !truthy(
+              process.env.OPENCODE_CONFIG_PROJECT_DISABLE ?? process.env.OPENCODE_DISABLE_PROJECT_CONFIG,
+            ),
+            file: process.env.OPENCODE_CONFIG,
+            content: process.env.OPENCODE_CONFIG_CONTENT,
+          },
+          windows: {
+            gitbash: process.env.OPENCODE_GIT_BASH_PATH,
           },
           fs: {
             filewatcher: !truthy(

@@ -4,17 +4,18 @@ import { NodeRuntime, NodeServices } from "@effect/platform-node"
 import { Effect } from "effect"
 import { Commands } from "./commands/commands"
 import { Runtime } from "./framework/runtime"
-import { Observability } from "@opencode-ai/core/observability"
+import { Observability } from "@opencode-ai/util/observability"
 import { Updater } from "./services/updater"
-import { InstallationChannel, InstallationVersion, InstallationLocal } from "@opencode-ai/core/installation/version"
-import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Global } from "@opencode-ai/core/global"
-import { AppProcess } from "@opencode-ai/core/process"
+import { InstallationChannel, InstallationVersion, InstallationLocal } from "@opencode-ai/util/installation/version"
+import { LayerNode } from "@opencode-ai/util/effect/layer-node"
+import { Global } from "@opencode-ai/util/global"
+import { AppProcess } from "@opencode-ai/util/process"
 import { Config } from "./config"
-import { Npm } from "@opencode-ai/core/npm"
+import { Npm } from "@opencode-ai/util/npm"
 
 const Handlers = Runtime.handlers(Commands, {
   $: () => import("./commands/handlers/default"),
+  acp: () => import("./commands/handlers/acp"),
   api: () => import("./commands/handlers/api"),
   auth: {
     connect: () => import("./commands/handlers/auth/connect"),
@@ -60,11 +61,19 @@ Effect.logInfo("cli starting", {
   Effect.annotateLogs({ role: "cli" }),
   Effect.provide(Config.layer),
   Effect.provide(Updater.layer),
-  Effect.provide(LayerNode.compile(LayerNode.group([Global.node, AppProcess.node, Npm.node]))),
+  Effect.provide(
+    LayerNode.compile(LayerNode.group([Global.node, AppProcess.node, Npm.node]), [
+      [
+        Global.node,
+        Global.layerWith(process.env.OPENCODE_CONFIG_DIR ? { config: process.env.OPENCODE_CONFIG_DIR } : {}),
+      ],
+    ]),
+  ),
   Effect.provide(
     Observability.layer({
       endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
       headers: process.env.OTEL_EXPORTER_OTLP_HEADERS,
+      client: process.env.OPENCODE_CLIENT ?? "cli",
     }),
   ),
   Effect.provide(NodeServices.layer),
