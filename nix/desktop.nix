@@ -2,7 +2,7 @@
   lib,
   stdenv,
   bun,
-  nodejs,
+  nodejs_26,
   darwin,
   electron_41,
   makeWrapper,
@@ -24,7 +24,7 @@ stdenv.mkDerivation (finalAttrs: {
 
   nativeBuildInputs = [
     bun
-    nodejs
+    nodejs_26
     makeWrapper
     writableTmpDirAsHomeHook
   ] ++ lib.optionals stdenv.hostPlatform.isLinux [
