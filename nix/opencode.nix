@@ -60,8 +60,6 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     cd packages/cli
     bun --bun ./script/build-node.ts --single --skip-install
 
-    cd ../opencode
-
     runHook postBuild
   '';
 
