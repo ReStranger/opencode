@@ -44,6 +44,7 @@
           let
             node_modules = final.callPackage ./nix/node_modules.nix {
               inherit rev inputs;
+              version = self.opencodeVersion;
             };
           in
           rec {
@@ -61,6 +62,7 @@
         let
           node_modules = pkgs.callPackage ./nix/node_modules.nix {
             inherit rev inputs;
+            version = self.opencodeVersion;
           };
         in
         rec {
@@ -77,5 +79,7 @@
           };
         }
       );
+
+      opencodeVersion = (builtins.fromJSON (builtins.readFile ./package.json)).version;
     };
 }

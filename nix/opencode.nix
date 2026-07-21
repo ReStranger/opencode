@@ -58,10 +58,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   buildPhase = ''
     runHook preBuild
-    cd ../cli
+    cd packages/cli
     bun --bun ./script/build-node.ts --single --skip-install
-
-    cd ../opencode
 
     runHook postBuild
   '';
@@ -69,7 +67,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   installPhase = ''
     runHook preInstall
 
-    install -Dm755 ../cli/dist/cli-node-*/bin/opencode2-node $out/bin/opencode
+    install -Dm755 dist/cli-node-*/bin/opencode2-node $out/bin/opencode
 
     wrapProgram $out/bin/opencode \
       --prefix PATH : ${
