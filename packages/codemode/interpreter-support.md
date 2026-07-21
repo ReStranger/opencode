@@ -19,7 +19,7 @@ ultimate source of truth.
 - [x] Top-level `await` and `return` through the program's implicit async-function scope.
 - [x] Explicit `return`, final top-level expression as a REPL-style result, and `null` when no value is produced.
 - [x] Program results use JSON-like boundaries, with `undefined` and non-finite numbers normalized to `null`. Tool
-      arguments remain subject to their schema and the outbound-handling gap listed below.
+      arguments follow JSON serialization semantics before their schema applies (see the tools section).
 - [x] Live Date, RegExp, Map, Set, URL, and URLSearchParams values inside CodeMode.
 - [x] Tool calls through the host-provided `tools` tree only.
 - [x] The global `search(...)` built-in: synchronous tool discovery that counts as an admitted tool call and is
@@ -80,7 +80,7 @@ ultimate source of truth.
 - [x] Expression and block function bodies.
 - [x] User callbacks for the supported Array, Map, Set, URLSearchParams, sort, string-replacement, and `Array.from`
       mapper APIs, with one shared acceptance rule everywhere including promise reactions.
-- [x] `Boolean`, `Number`, `String`, `parseInt`, `parseFloat`, and URI helpers as callbacks.
+- [x] `Boolean`, `Number`, `String`, `parseInt`, `parseFloat`, `isFinite`, `isNaN`, and URI helpers as callbacks.
 - [x] Built-in method references as callbacks, such as `values.map(Math.abs)`, `records.map(JSON.stringify)`,
       `items.forEach(console.log)`, and `Promise.resolve(-1).then(Math.abs)`. Extra callback arguments a built-in
       does not consume are ignored, like JS; consumed arguments stay strictly validated (`Math.floor` still rejects a
@@ -91,8 +91,8 @@ ultimate source of truth.
       like JS.
 - [x] Tool references and detached `Promise` statics are rejected as callbacks with a hint to wrap them in an
       arrow function.
-- [ ] Stop automatically awaiting promise-returning string replacers; match JavaScript's synchronous callback-result
-      coercion.
+- [x] Promise-returning string replacers are coerced synchronously to `"[object Promise]"`, like JavaScript; they are
+      not automatically awaited.
 - [x] The optional `thisArg` of iteration methods is accepted and ignored: CodeMode functions have no `this`, so
       ignoring it matches JS arrow-function semantics exactly.
 - [ ] `this` in non-arrow CodeMode functions and callbacks.
@@ -157,8 +157,11 @@ ultimate source of truth.
 - [x] Dotted tool names are canonicalized into namespace paths; a path can be both callable and a namespace, and the
       last definition supplied for a canonical path wins.
 - [x] Tool path segments may be named `constructor`, `prototype`, or `__proto__` because paths use inert Map keys.
-- [ ] Reject `undefined` and non-finite numbers in outbound tool arguments before render-only and OpenAPI tools run;
-      retain null normalization for program results and JSON serialization.
+- [x] Outbound tool arguments follow JSON serialization semantics, like `JSON.stringify`: object properties with
+      `undefined` values are dropped, `undefined` array elements and non-finite numbers become `null`, and sparse
+      arrays densify. Tools never receive `undefined` inside their input object, though a bare `tools.t(undefined)`
+      argument still reaches schema decoding as `undefined`. Program results keep the stricter
+      normalization where every `undefined` becomes `null`.
 - [ ] Tokenize and case-fold non-ASCII tool paths, descriptions, and queries for tool search.
 
 ## Objects and properties
@@ -174,7 +177,7 @@ ultimate source of truth.
 - [ ] Legal own data fields named `__proto__`, `constructor`, or `prototype` are rejected at JSON/tool boundaries and
       cannot be created, read, or written in CodeMode; tool path segments with those names remain supported.
 - [x] `Object.is` for supported data values.
-- [ ] `Object.groupBy`.
+- [x] `Object.groupBy` over supported collection iterables, with string-key coercion and null-prototype results.
 
 ## Arrays
 
@@ -193,11 +196,11 @@ ultimate source of truth.
 - [x] Materialized iteration helpers: `keys`, `values`, and `entries` return arrays rather than iterators.
 - [x] `length`, numeric indexing, index assignment, spread, and `for...of`.
 - [x] The `thisArg` argument of `Array.from` is accepted and ignored, like JS arrows.
-- [ ] `Array.prototype.toSpliced`.
-- [ ] Canonical array/string index parsing: a key such as `"01"` must remain an ordinary property key rather than
-      aliasing index `1`.
-- [ ] `Array.prototype.sort` and `toSorted` must preserve trailing holes; they currently turn holes into own
-      `undefined` elements.
+- [x] `Array.prototype.toSpliced`.
+- [x] Canonical array/string index parsing: keys such as `"01"` remain non-index properties rather than aliasing index
+      `1`; arbitrary array-property assignment remains unsupported.
+- [x] `Array.prototype.sort` preserves trailing holes, while `toSorted` densifies holes into `undefined` elements,
+      like JavaScript.
 
 ## Strings
 
@@ -210,9 +213,12 @@ ultimate source of truth.
 - [x] `localeCompare`; locale and options arguments are currently ignored.
 - [x] `toString`, `length`, numeric indexing, spread, and `for...of` by Unicode code point.
 - [x] Static `String.fromCharCode` and `String.fromCodePoint`.
-- [ ] Native argument coercion for supported String methods; for example, `includes(1)` and `slice("1")` currently
-      reject instead of coercing.
-- [ ] Native no-argument parity for `match()` and `search()`.
+- [x] Native argument coercion for supported String methods; for example, `includes(1)` and `slice("1")` coerce like
+      native JS, `split(undefined)` returns the whole string, and `includes`/`startsWith`/`endsWith` reject regular
+      expressions with a native-style `TypeError`. Opaque runtime references still reject as data errors, and
+      `repeat` still requires a finite non-negative count.
+- [x] Native no-argument parity for `match()`, `matchAll()`, and `search()`; all behave as an empty pattern. Present
+      arguments must still be a regular expression or string pattern.
 
 ## Numbers and Math
 
@@ -226,13 +232,16 @@ ultimate source of truth.
 - [x] Math methods: `random`, `max`, `min`, `abs`, `acos`, `acosh`, `asin`, `asinh`, `atan`, `atan2`, `atanh`,
       `floor`, `ceil`, `round`, `trunc`, `sign`, `sqrt`, `cbrt`, `pow`, `hypot`, `cos`, `cosh`, `sin`, `sinh`,
       `tan`, `tanh`, `log`, `log2`, `log10`, `log1p`, `exp`, `expm1`, `f16round`, `fround`, `clz32`, and `imul`.
-- [ ] Native zero-argument behavior for `Number()` and `String()`; they currently do not produce `0` and `""`.
-- [ ] `++` and `--` must use CodeMode numeric coercion and reject opaque runtime references; they currently call host
-      `Number(...)` directly.
-- [ ] Unknown static members must read as `undefined` for feature detection; some currently appear callable or throw
-      during property access.
-- [ ] `Math.sumPrecise`.
-- [ ] Global coercing `isFinite` and `isNaN`.
+- [x] Native zero-argument behavior for `Number()` and `String()`: they produce `0` and `""`, while
+      `Number(undefined)` stays `NaN` and `String(undefined)` stays `"undefined"`.
+- [x] `++` and `--` use CodeMode numeric coercion (numeric strings increment, plain data objects become `NaN`, Dates
+      use their epoch time) and reject opaque runtime references as data errors.
+- [x] Unknown static members on global namespaces and on `Number`/`String`/the coercion functions read as `undefined`
+      for feature detection. Calling any undefined value reports a native-style `TypeError` naming the callee, for
+      example `Math.sum is not a function.` Blocked members (`constructor`, `__proto__`, ...) still throw,
+      and unknown `Promise` statics keep their descriptive error.
+- [x] `Math.sumPrecise` over supported collection iterables, rejecting non-number elements without coercion.
+- [x] Global coercing `isFinite` and `isNaN`; opaque runtime references reject as data errors, like `Number(...)`.
 
 ## JSON and console
 
@@ -256,26 +265,29 @@ ultimate source of truth.
       `getUTCSeconds`, and `getUTCMilliseconds`.
 - [x] `getTimezoneOffset`, arithmetic, relational comparison, and `instanceof Date`.
 - [x] Date values serialize to ISO strings; invalid dates serialize to `null`.
-- [ ] Date setters.
-- [ ] `Date.prototype.toUTCString` and its `toGMTString` alias.
-- [ ] Native one-argument Date coercion; unsupported boolean/object inputs currently become invalid dates instead of
-      being coerced.
-- [ ] Native Date loose-equality and default primitive-coercion semantics.
-- [ ] Native `RangeError` branding for invalid `toISOString()` calls.
+- [x] Local and UTC Date setters, including native argument coercion, mutation, rollover, invalid-Date recovery, and
+      `TimeClip` behavior.
+- [x] `Date.prototype.toUTCString` and its `toGMTString` alias.
+- [x] Native one-argument Date coercion for supported values, including booleans, null, arrays, and plain objects.
+- [x] Native Date loose-equality and default primitive-coercion semantics, using CodeMode's deterministic ISO string
+      representation for the string primitive.
+- [x] Native `RangeError` branding for invalid `toISOString()` calls.
 
 ## Regular expressions
 
 - [x] Literal and `RegExp(pattern, flags)` construction, with or without `new`.
 - [x] `test`, `exec`, and `toString`.
-- [x] Readable `source`, `flags`, `lastIndex`, `global`, `ignoreCase`, `multiline`, `sticky`, `unicode`, and `dotAll`.
+- [x] Readable `source`, `flags`, `lastIndex`, `hasIndices`, `global`, `ignoreCase`, `multiline`, `sticky`, `unicode`,
+      `unicodeSets`, and `dotAll`.
 - [x] Captures, safe named groups (blocked member names are omitted), match `.index`, and stateful global matching.
 - [x] Integration with supported String methods, including function replacers.
-- [ ] Writable `lastIndex`.
-- [ ] `hasIndices`, match `indices`, and `unicodeSets` metadata for the `d` and `v` flags.
-- [ ] `RegExp.escape`.
+- [x] Writable `lastIndex`.
+- [x] Match `indices` metadata for the `d` flag, including named groups on `exec`, `match`, and `matchAll` results.
+- [x] `RegExp.escape`.
 
 ## Map and Set
 
+- [x] Static `Map.groupBy` over supported collection iterables, preserving key identity.
 - [x] `new Map()` from entry arrays or another Map.
 - [x] Map `get`, `set`, `has`, `delete`, `clear`, `size`, and `forEach`.
 - [x] `new Set()` from arrays, strings, or another Set.
@@ -283,8 +295,8 @@ ultimate source of truth.
 - [x] Materialized `keys`, `values`, and `entries` arrays for Map and Set.
 - [x] Spread, `for...of`, `Array.from`, and `Object.fromEntries` integration.
 - [x] Map and Set values serialize to `{}` at host/JSON boundaries.
-- [ ] Set composition and relation methods: `union`, `intersection`, `difference`, `symmetricDifference`, `isSubsetOf`,
-      `isSupersetOf`, and `isDisjointFrom`.
+- [x] Set composition and relation methods: `union`, `intersection`, `difference`, `symmetricDifference`, `isSubsetOf`,
+      `isSupersetOf`, and `isDisjointFrom`, including supported Set-like operands.
 
 ## URL and URI helpers
 

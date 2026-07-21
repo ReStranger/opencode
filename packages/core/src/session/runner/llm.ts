@@ -143,6 +143,10 @@ const layer = Layer.effect(
               }
             }
             yield* publish(event)
+            if (LLMEvent.is.toolInputError(event)) {
+              if (prepared.resolveToolCall(event.name).type === "settle") needsContinuation = true
+              return
+            }
             if (event.type !== "tool-call" || event.providerExecuted) return
             const tool = prepared.resolveToolCall(event.name)
             if (tool.type === "reject") {
@@ -195,25 +199,27 @@ const layer = Layer.effect(
         tokens: settlement.tokens,
       })
 
-      // Captures the end snapshot, diffs it against the step's start, and durably ends the
-      // assistant step.
+      const captureStepEnd = Effect.fnUntraced(function* () {
+        const snapshot = yield* snapshots.capture()
+        const files =
+          startSnapshot && snapshot
+            ? yield* snapshots
+                .files({ from: startSnapshot, to: snapshot })
+                .pipe(Effect.catch(() => Effect.succeed(undefined)))
+            : undefined
+        return { snapshot, files }
+      })
+
       const publishStepEnd = (settlement: NonNullable<ReturnType<typeof publisher.stepSettlement>>) =>
         Effect.gen(function* () {
-          const endSnapshot = yield* snapshots.capture()
-          const files =
-            startSnapshot && endSnapshot
-              ? yield* snapshots
-                  .files({ from: startSnapshot, to: endSnapshot })
-                  .pipe(Effect.catch(() => Effect.succeed(undefined)))
-              : undefined
+          const end = yield* captureStepEnd()
           yield* serialized(
             events.publish(SessionEvent.Step.Ended, {
               sessionID: session.id,
               assistantMessageID: yield* publisher.startAssistant(),
               finish: settlement.finish,
               ...stepUsage(settlement),
-              snapshot: endSnapshot,
-              files,
+              ...end,
             }),
           )
         })
@@ -324,8 +330,15 @@ const layer = Layer.effect(
           const stepFailure = publisher.stepFailure()
           const stepSettlement = publisher.stepSettlement()
           if (stepSettlement && !stepFailure) yield* publishStepEnd(stepSettlement)
-          if (stepFailure)
-            yield* serialized(publisher.publishStepFailure(stepSettlement ? stepUsage(stepSettlement) : undefined))
+          if (stepFailure) {
+            const end = yield* captureStepEnd()
+            yield* serialized(
+              publisher.publishStepFailure({
+                ...(stepSettlement ? stepUsage(stepSettlement) : {}),
+                ...end,
+              }),
+            )
+          }
 
           if (stream._tag === "Failure") return yield* Effect.failCause(stream.cause)
           if (userDeclined) return yield* Effect.interrupt
@@ -378,7 +391,11 @@ const layer = Layer.effect(
               .pipe(Effect.andThen(Effect.fail(error.cause)))
           }),
         )
-        if (attempt._tag === "Completed") return { needsContinuation: attempt.needsContinuation, step: attempt.step }
+        if (attempt._tag === "Completed")
+          return {
+            needsContinuation: attempt.needsContinuation,
+            step: attempt.step,
+          }
         if (attempt._tag === "RestartAfterOverflowCompaction") recoverOverflow = undefined
         yield* Effect.yieldNow
         currentPromotion = undefined
@@ -410,7 +427,9 @@ const layer = Layer.effect(
               yield* events.publish(SessionEvent.Compaction.Failed, {
                 sessionID,
                 reason: "manual",
-                error: { type: "compaction.failed", message: Cause.pretty(compacted.cause) },
+                error: Cause.hasInterruptsOnly(compacted.cause)
+                  ? { type: "aborted", message: "Compaction cancelled" }
+                  : { type: "compaction.failed", message: Cause.pretty(compacted.cause) },
                 inputID: unsettled.id,
               })
             return yield* Effect.failCause(compacted.cause)

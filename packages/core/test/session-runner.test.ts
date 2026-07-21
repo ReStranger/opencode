@@ -1892,6 +1892,35 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
+  it.effect("records cancelled manual compaction without surfacing an internal failure", () =>
+    Effect.gen(function* () {
+      const session = yield* setup
+      response = reply.text("Earlier answer", "text-manual-interrupt-history")
+      yield* admit(session, "Earlier question")
+      yield* session.resume(sessionID)
+
+      const streamed = yield* Deferred.make<void>()
+      const partial = fragmentFixture("text", "text-manual-interrupt-summary", ["Partial summary"])
+      responseStream = Stream.concat(
+        Stream.fromIterable(partial.partialEvents),
+        Stream.fromEffect(Deferred.succeed(streamed, undefined)).pipe(Stream.flatMap(() => Stream.never)),
+      )
+      const compaction = yield* session.compact({ sessionID })
+      const run = yield* session.resume(sessionID).pipe(Effect.forkChild)
+      yield* Deferred.await(streamed)
+      yield* session.interrupt(sessionID)
+
+      yield* Fiber.await(run)
+      expect(yield* SessionPending.compaction((yield* Database.Service).db, sessionID)).toBeUndefined()
+      expect((yield* session.messages({ sessionID })).find((message) => message.id === compaction.id)).toMatchObject({
+        type: "compaction",
+        status: "failed",
+        reason: "manual",
+        error: { type: "aborted", message: "Compaction cancelled" },
+      })
+    }),
+  )
+
   it.effect("settles an admitted manual compaction when pre-start resolution throws", () =>
     Effect.gen(function* () {
       const session = yield* setup
@@ -4135,6 +4164,320 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
+  it.effect("continues after malformed local tool input without exposing raw arguments", () =>
+    Effect.gen(function* () {
+      const session = yield* setup
+      yield* admit(session, "Recover malformed tool input")
+      const marker = "raw-malformed-marker"
+      const raw = `{"text":"${marker}`
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolInputStart({ id: "call-malformed", name: "echo" }),
+          LLMEvent.toolInputDelta({ id: "call-malformed", name: "echo", text: raw }),
+          LLMEvent.toolInputEnd({ id: "call-malformed", name: "echo" }),
+          LLMEvent.toolInputError({
+            id: "call-malformed",
+            name: "echo",
+            raw,
+          }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        reply.stop(),
+      ]
+
+      yield* session.resume(sessionID)
+
+      expect(requests).toHaveLength(2)
+      expect(executions).toEqual([])
+      expect(JSON.stringify(requests[1])).not.toContain(marker)
+      expect(requests[1]?.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: "assistant",
+            content: expect.arrayContaining([
+              expect.objectContaining({ type: "tool-call", id: "call-malformed", name: "echo", input: {} }),
+            ]),
+          }),
+          expect.objectContaining({
+            role: "tool",
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                type: "tool-result",
+                id: "call-malformed",
+                result: expect.objectContaining({
+                  type: "error",
+                  value: expect.objectContaining({
+                    error: expect.objectContaining({
+                      message: "Tool call arguments were malformed JSON and were not executed. Retry with valid JSON.",
+                    }),
+                  }),
+                }),
+              }),
+            ]),
+          }),
+        ]),
+      )
+      const context = yield* session.context(sessionID)
+      const failed = context.find(
+        (message): message is SessionMessage.Assistant =>
+          message.type === "assistant" && message.content.some((item) => item.type === "tool"),
+      )
+      expect(failed).toMatchObject({
+        content: [
+          {
+            type: "tool",
+            id: "call-malformed",
+            executed: false,
+            state: {
+              status: "error",
+              input: {},
+              error: {
+                type: "tool.input-json",
+                message: "Tool call arguments were malformed JSON and were not executed. Retry with valid JSON.",
+              },
+            },
+          },
+        ],
+      })
+      if (!failed) throw new Error("Malformed tool assistant missing")
+      expect(failed.error).toBeUndefined()
+      expect((yield* recordedStepSettlementEvents(sessionID, failed.id)).map((event) => event.type)).toEqual([
+        "session.step.started.1",
+        "session.tool.failed.1",
+        "session.step.ended.1",
+      ])
+      const database = (yield* Database.Service).db
+      const durable = yield* database
+        .select({ type: EventTable.type, data: EventTable.data })
+        .from(EventTable)
+        .where(eq(EventTable.aggregate_id, sessionID))
+        .all()
+        .pipe(Effect.orDie)
+      expect(durable.find((event) => event.type === "session.tool.input.ended.1")?.data).toMatchObject({
+        callID: "call-malformed",
+        text: raw,
+      })
+    }),
+  )
+
+  it.effect("settles a valid sibling before recovering malformed tool input", () =>
+    Effect.gen(function* () {
+      const session = yield* setup
+      yield* admit(session, "Run parallel tools")
+      toolExecutionGate = yield* Deferred.make<void>()
+      toolExecutionsStarted = yield* Deferred.make<void>()
+      toolExecutionsReady = 1
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-valid", name: "echo", input: { text: "valid" } }),
+          LLMEvent.toolInputError({
+            id: "call-malformed",
+            name: "echo",
+            raw: '{"text":"partial',
+          }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        reply.stop(),
+      ]
+
+      const run = yield* session.resume(sessionID).pipe(Effect.forkChild)
+      yield* Deferred.await(toolExecutionsStarted)
+      expect(requests).toHaveLength(1)
+      yield* Deferred.succeed(toolExecutionGate, undefined)
+      yield* Fiber.join(run)
+      toolExecutionGate = undefined
+      toolExecutionsStarted = undefined
+
+      expect(requests).toHaveLength(2)
+      expect(executions).toEqual(["valid"])
+      const request = requests[1]
+      if (!request) throw new Error("Malformed recovery request missing")
+      expect(request.messages.flatMap((message) => (message.role === "tool" ? message.content : []))).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "call-valid", type: "tool-result" }),
+          expect.objectContaining({ id: "call-malformed", type: "tool-result" }),
+        ]),
+      )
+    }),
+  )
+
+  it.effect("does not recover malformed input after sibling execution is interrupted", () =>
+    Effect.gen(function* () {
+      const session = yield* setup
+      yield* admit(session, "Interrupt malformed recovery")
+      toolExecutionGate = yield* Deferred.make<void>()
+      toolExecutionsStarted = yield* Deferred.make<void>()
+      toolExecutionsReady = 1
+      response = [
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.toolCall({ id: "call-valid", name: "echo", input: { text: "blocked" } }),
+        LLMEvent.toolInputError({
+          id: "call-malformed",
+          name: "echo",
+          raw: '{"text":"partial',
+        }),
+        LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+        LLMEvent.finish({ reason: "tool-calls" }),
+      ]
+
+      const run = yield* session.resume(sessionID).pipe(Effect.forkChild)
+      yield* Deferred.await(toolExecutionsStarted)
+      while (
+        !(yield* session.context(sessionID)).some(
+          (message) =>
+            message.type === "assistant" &&
+            message.content.some((item) => item.type === "tool" && item.id === "call-malformed"),
+        )
+      )
+        yield* Effect.yieldNow
+      yield* session.interrupt(sessionID)
+      toolExecutionGate = undefined
+      toolExecutionsStarted = undefined
+
+      expect(yield* Fiber.await(run)).toMatchObject({ _tag: "Failure" })
+      expect(requests).toHaveLength(1)
+      expect(yield* session.context(sessionID)).toMatchObject([
+        { type: "user", text: "Interrupt malformed recovery" },
+        {
+          type: "assistant",
+          error: { type: "aborted", message: "Step interrupted" },
+          content: [
+            { type: "tool", id: "call-valid", state: { status: "error", error: { type: "aborted" } } },
+            { type: "tool", id: "call-malformed", state: { status: "error" } },
+          ],
+        },
+      ])
+    }),
+  )
+
+  it.effect("records malformed provider-executed input as executed", () =>
+    Effect.gen(function* () {
+      const session = yield* setup
+      yield* admit(session, "Fail malformed hosted input")
+      const failure = new LLMError({
+        module: "test",
+        method: "stream",
+        reason: new InvalidProviderOutputReason({ message: "Invalid hosted tool input" }),
+      })
+      responseStream = Stream.fromIterable([
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.toolInputStart({ id: "call-hosted", name: "web_search", providerExecuted: true }),
+        LLMEvent.toolInputDelta({ id: "call-hosted", name: "web_search", text: '{"query":"partial' }),
+      ]).pipe(Stream.concat(Stream.fail(failure)))
+
+      expect(yield* session.resume(sessionID).pipe(Effect.flip)).toBe(failure)
+      expect(requireAssistant(yield* session.context(sessionID))).toMatchObject({
+        error: { type: "provider.invalid-output", message: "Invalid hosted tool input" },
+        content: [
+          {
+            type: "tool",
+            id: "call-hosted",
+            executed: true,
+            state: { status: "error", error: { type: "provider.invalid-output" } },
+          },
+        ],
+      })
+    }),
+  )
+
+  it.effect("records a provider failure after malformed input", () =>
+    Effect.gen(function* () {
+      const session = yield* setup
+      yield* admit(session, "Fail after malformed input")
+      const failure = new LLMError({
+        module: "test",
+        method: "stream",
+        reason: new InvalidProviderOutputReason({ message: "Provider failed after malformed input" }),
+      })
+      responseStream = Stream.fromIterable([
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.toolInputError({
+          id: "call-malformed",
+          name: "echo",
+          raw: '{"text":"partial',
+        }),
+      ]).pipe(Stream.concat(Stream.fail(failure)))
+
+      expect(yield* session.resume(sessionID).pipe(Effect.flip)).toBe(failure)
+      expect(requireAssistant(yield* session.context(sessionID))).toMatchObject({
+        error: { type: "provider.invalid-output", message: "Provider failed after malformed input" },
+        content: [
+          {
+            type: "tool",
+            id: "call-malformed",
+            executed: false,
+            state: { status: "error", error: { type: "tool.input-json" } },
+          },
+        ],
+      })
+      expect(requests).toHaveLength(1)
+    }),
+  )
+
+  it.effect("continues after repeated malformed tool input", () =>
+    Effect.gen(function* () {
+      const session = yield* setup
+      yield* admit(session, "Keep producing malformed tools")
+      const malformed = (id: string) => [
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.toolInputError({
+          id,
+          name: "echo",
+          raw: '{"text":"partial',
+        }),
+        LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+        LLMEvent.finish({ reason: "tool-calls" }),
+      ]
+      responses = [
+        malformed("call-first"),
+        reply.tool("call-valid-between", "echo", { text: "valid" }),
+        malformed("call-second"),
+        reply.stop(),
+      ]
+
+      yield* session.resume(sessionID)
+
+      expect(requests).toHaveLength(4)
+      expect(executions).toEqual(["valid"])
+      expect((yield* recordedEventTypes(sessionID)).filter((type) => type === "session.step.failed.1")).toHaveLength(0)
+    }),
+  )
+
+  it.effect("does not continue malformed tool input past the agent step limit", () =>
+    Effect.gen(function* () {
+      const session = yield* setup
+      const agents = yield* AgentV2.Service
+      yield* agents.transform((editor) =>
+        editor.update(AgentV2.ID.make("build"), (agent) => {
+          agent.steps = 2
+        }),
+      )
+      yield* admit(session, "Stop malformed tools at the step limit")
+      const malformed = (id: string) => [
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.toolInputError({
+          id,
+          name: "echo",
+          raw: '{"text":"partial',
+        }),
+        LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+        LLMEvent.finish({ reason: "tool-calls" }),
+      ]
+      responses = [malformed("call-first"), malformed("call-at-limit")]
+
+      yield* session.resume(sessionID)
+
+      expect(requests).toHaveLength(2)
+      expect(requests[0]?.toolChoice).toBeUndefined()
+      expect(requests[1]?.toolChoice).toMatchObject({ type: "none" })
+      expect((yield* recordedEventTypes(sessionID)).filter((type) => type === "session.tool.failed.1")).toHaveLength(2)
+    }),
+  )
+
   it.effect("does not continue automatically after a provider error follows a local tool call", () =>
     Effect.gen(function* () {
       const session = yield* setup
@@ -4223,6 +4566,24 @@ describe("SessionRunnerLLM", () => {
         "session.step.failed.1",
       ])
       expect(events[2]?.data.error).toMatchObject({ type: "unknown", message: "unexpected tool defect" })
+    }),
+  )
+
+  it.effect("preserves the provider failure when tool output persistence also fails", () =>
+    Effect.gen(function* () {
+      const session = yield* setup
+      yield* admit(session, "Storage fails while provider fails")
+      response = [
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.toolCall({ id: "call-store-provider-error", name: "storefail", input: {} }),
+        LLMEvent.providerError({ message: "Provider unavailable" }),
+      ]
+
+      expect(yield* session.resume(sessionID).pipe(Effect.exit)).toMatchObject({ _tag: "Failure" })
+
+      expect(requireAssistant(yield* session.context(sessionID))).toMatchObject({
+        error: { type: "provider.unknown", message: "Provider unavailable" },
+      })
     }),
   )
 

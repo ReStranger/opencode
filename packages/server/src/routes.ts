@@ -4,6 +4,7 @@ import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { EventV2 } from "@opencode-ai/core/event"
 import { EventLogger } from "@opencode-ai/core/event-logger"
+import { FileSystemSearch } from "@opencode-ai/core/filesystem/search"
 import { Observability } from "@opencode-ai/core/observability"
 import { Credential } from "@opencode-ai/core/credential"
 import { PermissionSaved } from "@opencode-ai/core/permission/saved"
@@ -12,11 +13,13 @@ import { Project } from "@opencode-ai/core/project"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { Job } from "@opencode-ai/core/job"
 import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
+import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { SessionRestart } from "@opencode-ai/core/session/execution/restart"
 import { PluginRuntime } from "@opencode-ai/core/plugin/runtime"
 import { SdkPlugins } from "@opencode-ai/core/plugin/sdk"
 import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { WellKnown } from "@opencode-ai/core/wellknown"
+import { Watcher } from "@opencode-ai/core/filesystem/watcher"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Context, Effect, Layer, Option } from "effect"
@@ -30,6 +33,7 @@ import { layer } from "./location"
 import { formLocationLayer } from "./middleware/form-location"
 import { sessionLocationLayer } from "./middleware/session-location"
 import { ServerInfo } from "./server-info"
+import type { ServerOptions } from "./options"
 
 const applicationServices = LayerNode.group([
   Database.node,
@@ -51,25 +55,31 @@ const applicationServices = LayerNode.group([
   SessionRestart.node,
 ])
 
-export function createRoutes(password?: string, serviceURLs: () => ReadonlyArray<string> = () => []) {
+export function createRoutes(options: ServerOptions = {}, serviceURLs: () => ReadonlyArray<string> = () => []) {
   return makeRoutes(
-    password
-      ? ServerAuth.Config.configLayer({ username: "opencode", password: Option.some(password) })
+    options.password
+      ? ServerAuth.Config.configLayer({ username: "opencode", password: Option.some(options.password) })
       : ServerAuth.Config.layer,
+    options,
     serviceURLs,
   )
 }
 
-export function createEmbeddedRoutes() {
-  return makeRoutes(ServerAuth.Config.configLayer({ username: "opencode", password: Option.none() }))
+export function createEmbeddedRoutes(options: ServerOptions = {}) {
+  return makeRoutes(ServerAuth.Config.configLayer({ username: "opencode", password: Option.none() }), options, () => [])
 }
 
 function makeRoutes<AuthError, AuthServices>(
   auth: Layer.Layer<ServerAuth.Config, AuthError, AuthServices>,
-  serviceURLs: () => ReadonlyArray<string> = () => [],
+  options: ServerOptions,
+  serviceURLs: () => ReadonlyArray<string>,
 ) {
   const pluginRuntimeCell = PluginRuntime.makeCell()
   const replacements: LayerNode.Replacements = [
+    [Database.node, Database.layer(options.database)],
+    [ModelsDev.node, ModelsDev.nodeWith(options.models)],
+    [Watcher.node, Watcher.nodeWith({ enabled: options.fs?.filewatcher })],
+    [FileSystemSearch.node, FileSystemSearch.nodeWith({ fff: options.fs?.fff })],
     [PluginRuntime.node, PluginRuntime.layerWithCell(pluginRuntimeCell)],
     [PluginRuntime.providerNode, PluginRuntime.providerNodeWithCell(pluginRuntimeCell)],
   ]
@@ -98,7 +108,7 @@ function makeRoutes<AuthError, AuthServices>(
         Layer.provide(authorizationLayer),
         Layer.provide(schemaErrorLayer),
         Layer.provide(auth),
-        Layer.provide(Observability.layer),
+        Layer.provide(Observability.layer(options.observability)),
         HttpRouter.provideRequest(requestServices),
         Layer.provideMerge(services),
         Layer.provideMerge(HttpRouter.layer),

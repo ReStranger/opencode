@@ -129,6 +129,7 @@ export const ToolInputStart = Schema.Struct({
   type: Schema.tag("tool-input-start"),
   id: ToolCallID,
   name: Schema.String,
+  providerExecuted: Schema.optional(Schema.Boolean),
   providerMetadata: Schema.optional(ProviderMetadata),
 }).annotate({ identifier: "LLM.Event.ToolInputStart" })
 export type ToolInputStart = Schema.Schema.Type<typeof ToolInputStart>
@@ -148,6 +149,15 @@ export const ToolInputEnd = Schema.Struct({
   providerMetadata: Schema.optional(ProviderMetadata),
 }).annotate({ identifier: "LLM.Event.ToolInputEnd" })
 export type ToolInputEnd = Schema.Schema.Type<typeof ToolInputEnd>
+
+/** A local tool call whose final input could not be decoded. */
+export const ToolInputError = Schema.Struct({
+  type: Schema.tag("tool-input-error"),
+  id: ToolCallID,
+  name: Schema.String,
+  raw: Schema.String,
+}).annotate({ identifier: "LLM.Event.ToolInputError" })
+export type ToolInputError = Schema.Schema.Type<typeof ToolInputError>
 
 export const ToolCall = Schema.Struct({
   type: Schema.tag("tool-call"),
@@ -216,6 +226,7 @@ const llmEventTagged = Schema.Union([
   ToolInputStart,
   ToolInputDelta,
   ToolInputEnd,
+  ToolInputError,
   ToolCall,
   ToolResult,
   ToolError,
@@ -253,6 +264,8 @@ export const LLMEvent = Object.assign(llmEventTagged, {
   toolInputDelta: (input: WithID<ToolInputDelta, ToolCallID>) =>
     ToolInputDelta.make({ ...input, id: toolCallID(input.id) }),
   toolInputEnd: (input: WithID<ToolInputEnd, ToolCallID>) => ToolInputEnd.make({ ...input, id: toolCallID(input.id) }),
+  toolInputError: (input: WithID<ToolInputError, ToolCallID>) =>
+    ToolInputError.make({ ...input, id: toolCallID(input.id) }),
   toolCall: (input: WithID<ToolCall, ToolCallID>) => ToolCall.make({ ...input, id: toolCallID(input.id) }),
   toolResult: (input: WithID<ToolResult, ToolCallID>) =>
     ToolResult.make({
@@ -283,6 +296,7 @@ export const LLMEvent = Object.assign(llmEventTagged, {
     toolInputStart: llmEventTagged.guards["tool-input-start"],
     toolInputDelta: llmEventTagged.guards["tool-input-delta"],
     toolInputEnd: llmEventTagged.guards["tool-input-end"],
+    toolInputError: llmEventTagged.guards["tool-input-error"],
     toolCall: llmEventTagged.guards["tool-call"],
     toolResult: llmEventTagged.guards["tool-result"],
     toolError: llmEventTagged.guards["tool-error"],
@@ -548,6 +562,10 @@ const reduceResponseState = (state: ResponseState, event: LLMEvent): ResponseSta
       return reduceToolInputDelta(next, event)
     case "tool-input-end":
       return reduceToolInputEnd(next, event)
+    case "tool-input-error": {
+      const { [event.id]: _finished, ...toolInputs } = next.toolInputs
+      return { ...next, toolInputs }
+    }
     case "tool-call":
       return reduceToolCall(next, event)
     case "tool-result":

@@ -54,24 +54,50 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
       }
       const password =
         options.mode === "service"
-          ? yield* ServiceConfig.password()
+          ? config.password || randomBytes(32).toString("base64url")
           : environmentPassword
             ? Redacted.value(environmentPassword)
             : randomBytes(32).toString("base64url")
       if (!password) return yield* Effect.fail(new Error("Missing server password"))
       const instanceID = randomUUID()
-      const server = yield* start({
-        hostname,
-        port: Option.fromNullishOr(port),
-        password,
-        instanceID,
-        service:
-          serviceOptions === undefined
-            ? undefined
-            : {
-                onListen: (address, shutdown) => register(address, password, instanceID, serviceOptions.file, shutdown),
-              },
-      }).pipe(
+      const server = yield* start(
+        {
+          hostname,
+          port,
+          password,
+          database: {
+            path: process.env.OPENCODE_DB,
+          },
+          models: {
+            url: process.env.OPENCODE_MODELS_URL,
+            file: process.env.OPENCODE_MODELS_PATH,
+            fetch: !truthy(process.env.OPENCODE_DISABLE_MODELS_FETCH),
+          },
+          observability: {
+            endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+            headers: process.env.OTEL_EXPORTER_OTLP_HEADERS,
+          },
+          fs: {
+            filewatcher: !truthy(
+              process.env.OPENCODE_FILEWATCHER_DISABLE ?? process.env.OPENCODE_DISABLE_FILEWATCHER,
+            ),
+            fff:
+              process.env.OPENCODE_DISABLE_FFF === undefined
+                ? process.platform !== "win32"
+                : !truthy(process.env.OPENCODE_DISABLE_FFF),
+          },
+        },
+        serviceOptions === undefined
+          ? undefined
+          : {
+              instanceID,
+              onListen: (address, shutdown) =>
+                Effect.gen(function* () {
+                  if (!config.password) yield* ServiceConfig.password(password)
+                  return yield* register(address, password, instanceID, serviceOptions.file, shutdown)
+                }),
+            },
+      ).pipe(
         Effect.provide(Logger.layer([], { mergeWithExisting: false })),
         Effect.catch((error) => {
           if (serviceOptions === undefined || port === undefined || !addressInUse(error)) return Effect.fail(error)
@@ -154,14 +180,18 @@ const register = Effect.fnUntraced(function* (
 const recognizeIncumbent = Effect.fnUntraced(function* (options: DiscoverOptions, hostname: string, port: number) {
   const found = yield* Service.incumbent({ ...options, url: serviceURL(hostname, port) }).pipe(
     Effect.filterOrFail((value) => value !== undefined),
-    Effect.retry(Schedule.max([Schedule.spaced("100 millis"), Schedule.recurs(60)])),
-    Effect.option,
+    Effect.retry(Schedule.spaced("100 millis")),
+    Effect.timeoutOption("15 seconds"),
   )
   return Option.isSome(found)
 })
 
 function serviceURL(hostname: string, port: number) {
   return `http://${hostname.includes(":") ? `[${hostname}]` : hostname}:${port}`
+}
+
+function truthy(value?: string) {
+  return value === "1" || value?.toLowerCase() === "true"
 }
 
 function addressInUse(error: unknown): boolean {

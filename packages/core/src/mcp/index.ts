@@ -42,6 +42,7 @@ export class ServerInstructions extends Schema.Class<ServerInstructions>("MCP.Se
 export class Tool extends Schema.Class<Tool>("MCP.Tool")({
   server: ServerName,
   name: Schema.String,
+  codemode: Schema.Boolean.pipe(Schema.optional),
   description: Schema.String.pipe(Schema.optional),
   inputSchema: Schema.Unknown.pipe(Schema.optional),
   outputSchema: Schema.Unknown.pipe(Schema.optional),
@@ -209,7 +210,12 @@ export const layer = Layer.effect(
       entry.integrationID = integrationID
       owned.add(integrationID)
       const methodID = Integration.MethodID.make(suffix)
-      entry.registration = yield* integration
+      // Each registration gets its own child scope so disposal detaches it from the root scope
+      // entirely; registering directly on root would accumulate a dead finalizer per replaced or
+      // removed server for the lifetime of the layer.
+      const scope = yield* Scope.fork(root)
+      entry.registration = { dispose: Scope.close(scope, Exit.void) }
+      yield* integration
         .transform((draft) => {
           draft.update(integrationID, (ref) => {
             ref.name = name
@@ -220,7 +226,7 @@ export const layer = Layer.effect(
             authorize: () => MCPOAuth.authorize({ name, config: remote, methodID }),
           })
         })
-        .pipe(Scope.provide(root))
+        .pipe(Scope.provide(scope))
     })
     yield* Effect.forEach(runtime, ([name, entry]) => register(name, entry), { discard: true })
 
@@ -362,10 +368,11 @@ export const layer = Layer.effect(
         }),
     } satisfies MCPClient.ElicitationHandler
 
-    const toTool = (server: ServerName, def: MCPClient.ToolDefinition) =>
+    const toTool = (server: ServerName, entry: ServerEntry, def: MCPClient.ToolDefinition) =>
       new Tool({
         server,
         name: def.name,
+        codemode: entry.config.codemode,
         description: def.description,
         inputSchema: def.inputSchema,
         outputSchema: def.outputSchema,
@@ -407,7 +414,7 @@ export const layer = Layer.effect(
     const refreshTools = (name: ServerName, entry: ServerEntry, connection: MCPClient.Connection) =>
       connection.tools().pipe(
         Effect.map((defs) => {
-          entry.tools = defs.map((def) => toTool(name, def))
+          entry.tools = defs.map((def) => toTool(name, entry, def))
         }),
       )
 
@@ -482,6 +489,10 @@ export const layer = Layer.effect(
 
     const startServer = (name: ServerName, entry: ServerEntry) =>
       Effect.gen(function* () {
+        // Announce the handshake so connect() and credential reconnects don't show a stale
+        // disabled/failed status for the duration of the connection attempt.
+        entry.status = { status: "pending" }
+        yield* events.publish(McpEvent.StatusChanged, { server: name }).pipe(Effect.ignore)
         const scope = yield* Scope.fork(root)
         entry.scope = scope
         const authProvider = yield* connectProvider(entry)
@@ -494,7 +505,7 @@ export const layer = Layer.effect(
         )
         if (Exit.isSuccess(result)) {
           entry.client = result.value.connection
-          entry.tools = result.value.tools.map((def) => toTool(name, def))
+          entry.tools = result.value.tools.map((def) => toTool(name, entry, def))
           entry.prompts = []
           entry.status = { status: "connected" }
           watch(name, entry, result.value.connection)

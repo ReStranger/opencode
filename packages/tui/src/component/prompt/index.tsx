@@ -26,6 +26,8 @@ import { editorSelectionKey, useEditorContext, type EditorSelection } from "../.
 import { normalizePromptContent, openEditor } from "../../editor"
 import { useExit } from "../../context/exit"
 import { promptOffsetWidth } from "../../prompt/display"
+import { expandPromptInputPastedText, realignPromptInputMentions } from "../../prompt/mention"
+import { parseSlashHead } from "../../prompt/parse"
 import { stringWidth } from "../../util/string-width"
 import { createStore, produce, unwrap } from "solid-js/store"
 import { emptyPrompt, usePromptHistory, type PromptInfo, type PromptPartRef } from "../../prompt/history"
@@ -137,15 +139,15 @@ function formatEditorContext(selection: EditorSelection) {
 let stashed: { prompt: PromptInfo; cursor: number } | undefined
 
 function argumentSlash(input: string, commands: readonly KeymapCommand[]) {
-  if (!input.startsWith("/")) return
-  const separator = input.search(/\s/)
-  const name = input.slice(1, separator === -1 ? undefined : separator)
+  const head = parseSlashHead(input, /\s/)
+  if (!head) return
   const command = commands.find(
     (command) =>
-      command.slash?.arguments && (command.slash.name === name || command.slash.aliases?.includes(name) === true),
+      command.slash?.arguments &&
+      (command.slash.name === head.name || command.slash.aliases?.includes(head.name) === true),
   )
   if (!command) return
-  return { command, input: separator === -1 ? "" : input.slice(separator + 1) }
+  return { command, input: head.arguments }
 }
 
 export function Prompt(props: PromptProps) {
@@ -295,8 +297,8 @@ export function Prompt(props: PromptProps) {
 
   createEffect(() => {
     if (!input || input.isDestroyed) return
-    if (props.disabled) input.cursorColor = themeV2.background.surface.offset()
-    if (!props.disabled) input.cursorColor = themeV2.text()
+    if (props.disabled) input.cursorColor = themeV2.background.surface.offset
+    if (!props.disabled) input.cursorColor = themeV2.text.default
   })
 
   const usage = createMemo(() => {
@@ -493,13 +495,8 @@ export function Prompt(props: PromptProps) {
         run: async () => {
           dialog.clear()
 
-          // replace summarized text parts with the actual text
-          const text = store.prompt.pasted.reduce(
-            (result, part) => result.replace(part.source.text, part.text),
-            store.prompt.text,
-          )
-
-          const value = text
+          const editorPrompt = expandPromptInputPastedText(store.prompt, store.prompt.pasted)
+          const value = editorPrompt.text
           const content = await openEditor({
             renderer,
             value,
@@ -513,20 +510,8 @@ export function Prompt(props: PromptProps) {
 
           input.setText(normalized)
 
-          // Update attachment positions and drop virtual text deleted in the editor.
-          // this handles a case where the user edits the text in the editor
-          // such that the virtual text moves around or is deleted
-          const moveMention = <Part extends { mention?: { start: number; end: number; text: string } }>(part: Part) => {
-            if (!part.mention?.text) return part
-            const start = normalized.indexOf(part.mention.text)
-            if (start === -1) return
-            return { ...part, mention: { ...part.mention, start, end: start + part.mention.text.length } }
-          }
-
           setStore("prompt", {
-            text: normalized,
-            files: store.prompt.files?.map(moveMention).filter((part) => part !== undefined),
-            agents: store.prompt.agents?.map(moveMention).filter((part) => part !== undefined),
+            ...realignPromptInputMentions(normalized, editorPrompt),
             pasted: [],
           })
           restoreExtmarksFromPrompt(store.prompt)
@@ -1122,7 +1107,7 @@ export function Prompt(props: PromptProps) {
       if (
         session?.model?.providerID !== selectedModel.providerID ||
         session.model.id !== selectedModel.modelID ||
-        session.model.variant !== variant
+        (session.model.variant ?? "default") !== (variant ?? "default")
       ) {
         await client.api.session.switchModel({
           sessionID,
@@ -1319,10 +1304,10 @@ export function Prompt(props: PromptProps) {
   }
 
   const highlight = createMemo(() => {
-    if (leader()) return themeV2.border()
-    if (store.mode === "shell") return themeV2.background.action()
+    if (leader()) return themeV2.border.default
+    if (store.mode === "shell") return themeV2.background.action.primary.default
     const agent = local.agent.current()
-    if (!agent) return themeV2.border()
+    if (!agent) return themeV2.border.default
     return local.agent.color(agent.id)
   })
 
@@ -1339,7 +1324,7 @@ export function Prompt(props: PromptProps) {
     () => !!local.agent.current() && store.mode === "normal" && showVariant(),
     animationsEnabled,
   )
-  const borderHighlight = createMemo(() => tint(themeV2.border(), highlight(), agentMetaAlpha()))
+  const borderHighlight = createMemo(() => tint(themeV2.border.default, highlight(), agentMetaAlpha()))
 
   const placeholderText = createMemo(() => {
     if (props.showPlaceholder === false) return undefined
@@ -1359,7 +1344,7 @@ export function Prompt(props: PromptProps) {
 
   const spinnerDef = createMemo(() => {
     const agent = status() === "running" ? local.agent.current() : local.agent.current()
-    const color = agent ? local.agent.color(agent.id) : themeV2.border()
+    const color = agent ? local.agent.color(agent.id) : themeV2.border.default
     return {
       frames: createFrames({
         color,
@@ -1379,7 +1364,7 @@ export function Prompt(props: PromptProps) {
   })
   const maxHeight = createMemo(() => Math.max(6, Math.floor(dimensions().height / 3)))
 
-  const promptBg = createMemo(() => themeV2.raise(themeV2.background.surface.offset()))
+  const promptBg = createMemo(() => themeV2.raise(themeV2.background.surface.offset))
 
   return (
     <>
@@ -1405,9 +1390,9 @@ export function Prompt(props: PromptProps) {
             <textarea
               width="100%"
               placeholder={placeholderText()}
-              placeholderColor={themeV2.text.subdued()}
-              textColor={leader() ? themeV2.text.subdued() : themeV2.text()}
-              focusedTextColor={leader() ? themeV2.text.subdued() : themeV2.text()}
+              placeholderColor={themeV2.text.subdued}
+              textColor={leader() ? themeV2.text.subdued : themeV2.text.default}
+              focusedTextColor={leader() ? themeV2.text.subdued : themeV2.text.default}
               minHeight={1}
               maxHeight={maxHeight()}
               onContentChange={() => {
@@ -1467,7 +1452,7 @@ export function Prompt(props: PromptProps) {
                 setTimeout(() => {
                   // setTimeout is a workaround and needs to be addressed properly
                   if (!input || input.isDestroyed) return
-                  input.cursorColor = themeV2.text()
+                  input.cursorColor = themeV2.text.default
                 }, 0)
               }}
               onMouseDown={(r: MouseEvent) => {
@@ -1475,7 +1460,7 @@ export function Prompt(props: PromptProps) {
                 r.target?.focus()
               }}
               focusedBackgroundColor="transparent"
-              cursorColor={props.disabled ? themeV2.background.surface.offset() : themeV2.text()}
+              cursorColor={props.disabled ? themeV2.background.surface.offset : themeV2.text.default}
               syntaxStyle={syntax()}
             />
             <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1} justifyContent="space-between">
@@ -1487,24 +1472,24 @@ export function Prompt(props: PromptProps) {
                         {store.mode === "shell" ? "Shell" : Locale.titlecase(agent().id)}
                       </text>
                       <Show when={store.mode === "normal" && local.permission.mode === "auto"}>
-                        <text fg={fadeColor(themeV2.text.subdued(), agentMetaAlpha())}>auto</text>
+                        <text fg={fadeColor(themeV2.text.subdued, agentMetaAlpha())}>auto</text>
                       </Show>
                       <Show when={store.mode === "normal"}>
                         <box flexDirection="row" gap={1}>
-                          <text fg={fadeColor(themeV2.text.subdued(), modelMetaAlpha())}>·</text>
+                          <text fg={fadeColor(themeV2.text.subdued, modelMetaAlpha())}>·</text>
                           <text
                             flexShrink={0}
-                            fg={fadeColor(leader() ? themeV2.text.subdued() : themeV2.text(), modelMetaAlpha())}
+                            fg={fadeColor(leader() ? themeV2.text.subdued : themeV2.text.default, modelMetaAlpha())}
                           >
                             {local.model.parsed().model}
                           </text>
-                          <text fg={fadeColor(themeV2.text.subdued(), modelMetaAlpha())}>{currentProviderLabel()}</text>
+                          <text fg={fadeColor(themeV2.text.subdued, modelMetaAlpha())}>{currentProviderLabel()}</text>
                           <Show when={showVariant()}>
-                            <text fg={fadeColor(themeV2.text.subdued(), variantMetaAlpha())}>·</text>
+                            <text fg={fadeColor(themeV2.text.subdued, variantMetaAlpha())}>·</text>
                             <text>
                               <span
                                 style={{
-                                  fg: fadeColor(themeV2.text.feedback.warning(), variantMetaAlpha()),
+                                  fg: fadeColor(themeV2.text.feedback.warning.default, variantMetaAlpha()),
                                   bold: true,
                                 }}
                               >
@@ -1558,12 +1543,12 @@ export function Prompt(props: PromptProps) {
               <Match when={status() === "running"}>
                 <box flexDirection="row" gap={1} flexGrow={1} justifyContent="flex-start">
                   <box marginLeft={1}>
-                    <Show when={config.animations ?? true} fallback={<text fg={themeV2.text.subdued()}>[⋯]</text>}>
+                    <Show when={config.animations ?? true} fallback={<text fg={themeV2.text.subdued}>[⋯]</text>}>
                       <spinner color={spinnerDef().color} frames={spinnerDef().frames} interval={40} />
                     </Show>
                   </box>
                   <text
-                    fg={store.interrupt > 0 ? themeV2.background.action() : themeV2.text()}
+                    fg={store.interrupt > 0 ? themeV2.background.action.primary.default : themeV2.text.default}
                     wrapMode="none"
                     truncate
                     flexShrink={1}
@@ -1571,7 +1556,7 @@ export function Prompt(props: PromptProps) {
                     esc{" "}
                     <span
                       style={{
-                        fg: store.interrupt > 0 ? themeV2.background.action() : themeV2.text.subdued(),
+                        fg: store.interrupt > 0 ? themeV2.background.action.primary.default : themeV2.text.subdued,
                       }}
                     >
                       {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
@@ -1582,16 +1567,16 @@ export function Prompt(props: PromptProps) {
               <Match when={move.progress()}>
                 {(progress) => (
                   <box paddingLeft={3} height={1} minHeight={0} flexShrink={1}>
-                    <Spinner color={themeV2.hue.accent(500)}>
+                    <Spinner color={themeV2.hue.accent[500]}>
                       {progress()}
-                      <span style={{ fg: themeV2.text.subdued() }}>{".".repeat(move.creatingDots())}</span>
+                      <span style={{ fg: themeV2.text.subdued }}>{".".repeat(move.creatingDots())}</span>
                     </Spinner>
                   </box>
                 )}
               </Match>
               <Match when={move.pendingNew()}>
                 <box paddingLeft={3} height={1} minHeight={0} flexShrink={1}>
-                  <text fg={themeV2.hue.accent(500)} wrapMode="none" truncate>
+                  <text fg={themeV2.hue.accent[500]} wrapMode="none" truncate>
                     (new working copy)
                   </text>
                 </box>
@@ -1599,7 +1584,7 @@ export function Prompt(props: PromptProps) {
               <Match when={true}>
                 <Show when={!props.hint && locationLabel()} fallback={props.hint ?? <text />}>
                   {(location) => (
-                    <text fg={themeV2.text.subdued()} wrapMode="none" truncate flexGrow={1} flexShrink={1}>
+                    <text fg={themeV2.text.subdued} wrapMode="none" truncate flexGrow={1} flexShrink={1}>
                       {location()}
                     </text>
                   )}
@@ -1613,7 +1598,7 @@ export function Prompt(props: PromptProps) {
                 wrapMode="none"
                 truncate
                 flexShrink={1}
-                fg={editorContextLabelState() === "pending" ? themeV2.hue.accent(500) : themeV2.text.subdued()}
+                fg={editorContextLabelState() === "pending" ? themeV2.hue.accent[500] : themeV2.text.subdued}
               >
                 {file()}
               </text>
@@ -1623,40 +1608,40 @@ export function Prompt(props: PromptProps) {
             <Match when={store.mode === "normal"}>
               <Switch>
                 <Match when={liveWorkStatusVisible() || statusItems().length > 0}>
-                  <text fg={themeV2.text.subdued()} wrapMode="none" truncate flexShrink={1}>
+                  <text fg={themeV2.text.subdued} wrapMode="none" truncate flexShrink={1}>
                     <Show when={liveWorkStatusVisible() && liveWorkShortcut()}>
-                      {(shortcut) => <span style={{ fg: themeV2.text() }}>{shortcut()} </span>}
+                      {(shortcut) => <span style={{ fg: themeV2.text.default }}>{shortcut()} </span>}
                     </Show>
                     <Show when={subagentStatusLabel()}>
-                      {(label) => <span style={{ fg: themeV2.text.subdued() }}>{label()}</span>}
+                      {(label) => <span style={{ fg: themeV2.text.subdued }}>{label()}</span>}
                     </Show>
                     <Show when={subagentStatusLabel() && shellStatusLabel()}>
-                      <span style={{ fg: themeV2.text.subdued() }}> · </span>
+                      <span style={{ fg: themeV2.text.subdued }}> · </span>
                     </Show>
                     <Show when={shellStatusLabel()}>
-                      {(label) => <span style={{ fg: themeV2.text.subdued() }}>{label()}</span>}
+                      {(label) => <span style={{ fg: themeV2.text.subdued }}>{label()}</span>}
                     </Show>
                     <Show when={liveWorkStatusVisible() && statusItems().length > 0}>
-                      <span style={{ fg: themeV2.text.subdued() }}> · </span>
+                      <span style={{ fg: themeV2.text.subdued }}> · </span>
                     </Show>
                     <Show when={statusItems().length > 0}>
-                      <span style={{ fg: themeV2.text.subdued() }}>{statusItems().join(" · ")}</span>
+                      <span style={{ fg: themeV2.text.subdued }}>{statusItems().join(" · ")}</span>
                     </Show>
                   </text>
                 </Match>
                 <Match when={true}>
-                  <text fg={themeV2.text()} flexShrink={0}>
-                    {agentShortcut()} <span style={{ fg: themeV2.text.subdued() }}>agents</span>
+                  <text fg={themeV2.text.default} flexShrink={0}>
+                    {agentShortcut()} <span style={{ fg: themeV2.text.subdued }}>agents</span>
                   </text>
                 </Match>
               </Switch>
-              <text fg={themeV2.text()} flexShrink={0}>
-                {paletteShortcut()} <span style={{ fg: themeV2.text.subdued() }}>commands</span>
+              <text fg={themeV2.text.default} flexShrink={0}>
+                {paletteShortcut()} <span style={{ fg: themeV2.text.subdued }}>commands</span>
               </text>
             </Match>
             <Match when={store.mode === "shell"}>
-              <text fg={themeV2.text()} flexShrink={0}>
-                esc <span style={{ fg: themeV2.text.subdued() }}>exit shell mode</span>
+              <text fg={themeV2.text.default} flexShrink={0}>
+                esc <span style={{ fg: themeV2.text.subdued }}>exit shell mode</span>
               </text>
             </Match>
           </Switch>

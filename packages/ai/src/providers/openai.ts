@@ -1,12 +1,14 @@
 import { AuthOptions, type ProviderAuthOption } from "../route/auth-options"
 import type { Route, RouteDefaultsInput } from "../route/client"
 import type { ProviderPackage } from "../provider-package"
-import { ProviderID, type ModelID } from "../schema"
+import { HttpOptions, ProviderID, ToolDefinition, mergeHttpOptions, type ModelID } from "../schema"
 import * as OpenAIChat from "../protocols/openai-chat"
 import * as OpenAIResponses from "../protocols/openai-responses"
 import { withOpenAIOptions, type OpenAIProviderOptionsInput } from "./openai-options"
+import { OpenAIImages, type OpenAIImageString } from "../protocols/openai-images"
 
 export type { OpenAIOptionsInput, OpenAIResponseIncludable } from "./openai-options"
+export type { OpenAIImageOptions } from "../protocols/openai-images"
 
 export const id = ProviderID.make("openai")
 
@@ -21,6 +23,39 @@ export type Config = RouteDefaultsInput &
     readonly queryParams?: Record<string, string>
     readonly providerOptions?: OpenAIProviderOptionsInput
   }
+
+export interface ImageGenerationOptions {
+  readonly action?: OpenAIImageString<"auto" | "generate" | "edit">
+  readonly background?: OpenAIImageString<"auto" | "opaque" | "transparent">
+  readonly inputFidelity?: OpenAIImageString<"low" | "high">
+  readonly outputCompression?: number
+  readonly outputFormat?: OpenAIImageString<"png" | "jpeg" | "webp">
+  readonly partialImages?: number
+  readonly quality?: OpenAIImageString<"auto" | "low" | "medium" | "high" | "standard" | "hd">
+  readonly size?: OpenAIImageString<
+    "auto" | "256x256" | "512x512" | "1024x1024" | "1536x1024" | "1024x1536" | "1792x1024" | "1024x1792"
+  >
+}
+
+export const imageGeneration = (options: ImageGenerationOptions = {}) =>
+  ToolDefinition.make({
+    name: "image_generation",
+    description: "Generate or edit an image using OpenAI's hosted image generation tool.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    native: {
+      openai: {
+        type: "image_generation",
+        action: options.action,
+        background: options.background,
+        input_fidelity: options.inputFidelity,
+        output_compression: options.outputCompression,
+        output_format: options.outputFormat,
+        partial_images: options.partialImages,
+        quality: options.quality,
+        size: options.size,
+      },
+    },
+  })
 
 export interface Settings extends ProviderPackage.Settings {
   readonly apiKey?: string
@@ -55,6 +90,17 @@ export const configure = (input: Config = {}) => {
   const responsesWebSocket = (id: string | ModelID) =>
     responsesWebSocketRoute.with(withOpenAIOptions(id, modelDefaults, { textVerbosity: true })).model({ id })
   const chat = (id: string | ModelID) => chatRoute.with(withOpenAIOptions(id, modelDefaults)).model({ id })
+  const image = (modelID: string | ModelID) =>
+    OpenAIImages.model({
+      id: modelID,
+      auth: auth(input),
+      baseURL: input.baseURL,
+      headers: input.headers,
+      http: mergeHttpOptions(
+        input.http === undefined ? undefined : HttpOptions.make(input.http),
+        input.queryParams === undefined ? undefined : new HttpOptions({ query: input.queryParams }),
+      ),
+    })
 
   return {
     id,
@@ -62,6 +108,7 @@ export const configure = (input: Config = {}) => {
     responses,
     responsesWebSocket,
     chat,
+    image,
     configure,
   }
 }
@@ -97,3 +144,4 @@ export const chatModel: ProviderPackage.Definition<Settings>["model"] = (modelID
 export const responses = provider.responses
 export const responsesWebSocket = provider.responsesWebSocket
 export const chat = provider.chat
+export const image = provider.image

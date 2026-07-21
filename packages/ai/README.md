@@ -1,6 +1,6 @@
 # @opencode-ai/ai
 
-Schema-first LLM core for opencode. One typed request, response, event, and tool language; provider quirks live in adapters, not in calling code.
+Schema-first AI primitives for opencode. Provider quirks live in adapters, not in calling code.
 
 ```ts
 import { Effect } from "effect"
@@ -24,6 +24,172 @@ const program = Effect.gen(function* () {
 
 Run `LLMClient.stream(request)` instead of `generate` when you want incremental `LLMEvent`s. The event stream is provider-neutral — same shape across OpenAI Chat, OpenAI Responses, Anthropic Messages, Gemini, Bedrock Converse, and any OpenAI-compatible deployment.
 
+## Image generation
+
+Use `Image.generate` with an image model for direct asset generation:
+
+```ts
+import { Image, ImageInput } from "@opencode-ai/ai"
+import { OpenAI } from "@opencode-ai/ai/providers"
+
+const program = Effect.gen(function* () {
+  const response = yield* Image.generate({
+    model: OpenAI.configure({ apiKey: process.env.OPENAI_API_KEY }).image("gpt-image-2"),
+    prompt: "A robot tending a rooftop garden",
+    options: {
+      n: 2,
+      size: "1024x1024",
+      quality: "high", // inferred from the OpenAI image model
+      outputFormat: "webp",
+      future_option: true, // unknown native options pass through unchanged
+    },
+  })
+
+  return response.images // GeneratedImage[] with owned bytes or a provider URL
+})
+```
+
+Pass ordered image inputs to the same method for editing, composition, or image-conditioned generation:
+
+```ts
+const response =
+  yield *
+  Image.generate({
+    model,
+    prompt: "Combine these product photos into one studio scene",
+    images: [
+      ImageInput.bytes(firstBytes, "image/png"),
+      ImageInput.url("https://example.com/second.webp"),
+      ImageInput.file("file_123"),
+    ],
+    options,
+    http,
+  })
+```
+
+`ImageInput.fileUri(uri, mediaType)` represents provider file URIs such as Gemini Files. Raw strings are not
+accepted as image inputs, avoiding ambiguity between base64, URLs, and provider IDs. Empty or omitted `images`
+uses text-to-image generation; a non-empty array selects the provider's edit behavior without enforcing provider
+image-count limits locally. `images` is the only common image-editing field. OpenAI uses multipart for byte/data-URL
+edits and its JSON reference body for URL or file-ID edits. Its provider-specific `options.mask` accepts an
+`ImageInput` for inpainting:
+
+```ts
+yield *
+  Image.generate({
+    model: OpenAI.configure({ apiKey }).image("gpt-image-2"),
+    prompt,
+    images: [ImageInput.bytes(sourceBytes, "image/png")],
+    options: { mask: ImageInput.bytes(maskBytes, "image/png") },
+  })
+```
+
+The OpenAI adapter extracts this helper value into the edit request's native `mask` field rather than passing the
+tagged `ImageInput` object through as an ordinary option. On multipart requests, `http.body` can override option
+fields but not structural `model`, `prompt`, `image[]`, or `mask` fields, and the transport owns the multipart
+`Content-Type` boundary. For JSON requests, `http.body` remains the final raw-native overlay. Gemini does not fetch
+public HTTP URLs, and hosted Z.ai image generation does not accept image inputs. These cases fail with
+`InvalidRequest` before network I/O.
+
+Provider-native image options belong to each request. Raw `http.body` fields have final precedence over them:
+
+```ts
+const model = OpenAI.configure({ apiKey }).image("gpt-image-2")
+
+yield *
+  Image.generate({
+    model,
+    prompt,
+    options: { quality: "medium" },
+    http,
+  })
+```
+
+xAI image models use the same request API with xAI-native controls:
+
+```ts
+yield *
+  Image.generate({
+    model: XAI.configure({ apiKey }).image("any-model-id"),
+    prompt,
+    options: {
+      n: 2,
+      aspectRatio: "16:9",
+      resolution: "1k",
+      responseFormat: "b64_json",
+      future_option: true,
+    },
+    http,
+  })
+```
+
+Google's current Gemini image models use the same direct API:
+
+```ts
+import { Google } from "@opencode-ai/ai/providers"
+
+const googleProgram = Effect.gen(function* () {
+  const response = yield* Image.generate({
+    model: Google.configure({ apiKey }).image("any-model-id"),
+    prompt: "A robot tending a rooftop garden",
+    options: {
+      aspectRatio: "16:9",
+      imageSize: "2K",
+      seed: 42,
+      thinkingLevel: "HIGH",
+      includeThoughts: true,
+      futureOption: true,
+    },
+    http,
+  })
+
+  return response.images
+})
+```
+
+Google image options are request-scoped and inferred from the selected model. Known fields autocomplete while
+future string values and arbitrary native Gemini `generationConfig` fields remain available. Native fields override
+their mapped aliases, and `http.body` is the final deep overlay. The selected model ID is sent to Gemini
+`generateContent` without a local allowlist.
+
+Z.ai image models infer open Z.ai-native options from the selected model:
+
+```ts
+yield *
+  Image.generate({
+    model: ZAI.configure({ apiKey }).image("any-model-id"),
+    prompt,
+    options: {
+      quality: "hd",
+      userID: "user-123",
+      future_option: true,
+    },
+    http,
+  })
+```
+
+Z.ai does not include trustworthy MIME metadata for output URLs, so generated images use
+`application/octet-stream`. Output URLs expire after 30 days; download and persist them promptly if they must
+remain available.
+
+Conversational image generation remains part of the LLM interaction. OpenAI Responses exposes it through its hosted image tool:
+
+```ts
+const program = Effect.gen(function* () {
+  const response = yield* LLM.generate(
+    LLM.request({
+      model: OpenAI.configure({ apiKey }).responses("gpt-5"),
+      prompt: "Design a solarpunk rooftop garden, then show me.",
+      tools: [OpenAI.imageGeneration({ quality: "high" })],
+    }),
+  )
+
+  return response.message
+})
+```
+
+The hosted result is represented as a provider-executed tool call and tool result. Its image is a `file` content item with a data URI, so retaining `response.message` preserves the generated image for continuation.
+
 ## Public API
 
 - **`LLM.request({...})`** — build a provider-neutral `LLMRequest`. Accepts ergonomic inputs (`system: string`, `prompt: string`) that normalize into the canonical Schema classes.
@@ -32,6 +198,8 @@ Run `LLMClient.stream(request)` instead of `generate` when you want incremental 
 - **`Model.make(...)` / `ToolCallPart.make(...)` / `ToolResultPart.make(...)` / `ToolDefinition.make(...)`** — model and tool-related constructors from the canonical schema model.
 - **`LLMClient.prepare(request)`** — compile a request through protocol body construction, validation, and HTTP preparation without sending. Useful for inspection and testing.
 - **`LLMEvent.is.*`** — typed guards (`is.textDelta`, `is.toolCall`, `is.finish`, …) for filtering streams.
+- **`Image.generate({...})`** — generate images through a provider-neutral image request and response model.
+- **`ImageClient`** — Effect service and layer for image execution, parallel to `LLMClient`.
 
 ## Caching
 
@@ -104,7 +272,7 @@ const gateway = CloudflareAIGateway.configure({
 }).model("workers-ai/@cf/meta/llama-3.1-8b-instruct")
 ```
 
-Included providers: OpenAI, Anthropic, Google (Gemini), Google Vertex Gemini and Anthropic, Amazon Bedrock, Azure OpenAI, Cloudflare AI Gateway, Cloudflare Workers AI, GitHub Copilot, OpenRouter, xAI, plus generic OpenAI-compatible Chat and Responses entrypoints and an Anthropic Messages-compatible entrypoint.
+Included providers: OpenAI, Anthropic, Google (Gemini), Google Vertex Gemini and Anthropic, Amazon Bedrock, Azure OpenAI, Cloudflare AI Gateway, Cloudflare Workers AI, GitHub Copilot, OpenRouter, xAI, Z.ai, plus generic OpenAI-compatible Chat and Responses entrypoints and an Anthropic Messages-compatible entrypoint.
 
 ### Package-like entrypoints
 
@@ -182,7 +350,7 @@ Adding a new model or deployment is usually 5-15 lines using `Route.make({ proto
 
 ## Effect
 
-This package is built on Effect. Public methods return `Effect` or `Stream`; provide `LLMClient.layer` for runtime dispatch and import the provider/protocol modules for the routes you use. The example at `example/tutorial.ts` is a runnable walkthrough.
+This package is built on Effect. Public methods return `Effect` or `Stream`; provide `LLMClient.layer` for LLM dispatch and `ImageClient.layer` for image dispatch, then import the provider/protocol modules for the routes you use. The example at `example/tutorial.ts` is a runnable walkthrough.
 
 ## See also
 
