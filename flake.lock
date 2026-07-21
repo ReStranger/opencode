@@ -88,11 +88,11 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1784594955,
-        "narHash": "sha256-ZQSY6JJLxrsoYllYVq6CKx4p6PL08LeMiqCJub/IaFs=",
+        "lastModified": 1784602087,
+        "narHash": "sha256-ux1b1zIkWQiNMgd1s1710+FAVx14StDHNtjey8sERhY=",
         "owner": "ReStranger",
         "repo": "re-nixpkgs",
-        "rev": "b52cb02b1ab87d05953a1b54edcf077d0b1ee6c0",
+        "rev": "fc3d63d25950e61ab85c7e4f154b805021eca5af",
         "type": "github"
       },
       "original": {
