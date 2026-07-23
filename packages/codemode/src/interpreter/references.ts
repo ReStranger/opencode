@@ -1,10 +1,12 @@
 import {
   type AstNode,
   CodeModeFunction,
+  CodeModeGenerator,
   CoercionFunction,
   ErrorConstructorReference,
   GlobalMethodReference,
   GlobalNamespace,
+  GeneratorMethodReference,
   InterpreterRuntimeError,
   IntrinsicReference,
   JsonMethodReference,
@@ -13,6 +15,7 @@ import {
   PromiseMethodReference,
   PromiseNamespace,
   SearchFunction,
+  SymbolNamespace,
   UriFunction,
 } from "./model.js"
 import { ToolReference } from "../tool-runtime.js"
@@ -20,6 +23,8 @@ import { isCodeModeValue, CodeModePromise } from "../values.js"
 
 export const isRuntimeReference = (value: unknown): boolean =>
   value instanceof CodeModeFunction ||
+  value instanceof CodeModeGenerator ||
+  value instanceof GeneratorMethodReference ||
   value instanceof ToolReference ||
   value instanceof IntrinsicReference ||
   value instanceof GlobalNamespace ||
@@ -34,6 +39,7 @@ export const isRuntimeReference = (value: unknown): boolean =>
   value instanceof SearchFunction ||
   value instanceof PromiseCapabilityFunction ||
   value instanceof ErrorConstructorReference ||
+  value instanceof SymbolNamespace ||
   isCodeModeValue(value)
 
 function* childValues(value: object): Generator<unknown> {
@@ -105,6 +111,7 @@ export const rejectCircularInsertion = (container: object, value: unknown, label
 export const typeofValue = (value: unknown): string => {
   if (
     value instanceof CodeModeFunction ||
+    value instanceof GeneratorMethodReference ||
     value instanceof CoercionFunction ||
     value instanceof IntrinsicReference ||
     value instanceof GlobalMethodReference ||
@@ -113,7 +120,8 @@ export const typeofValue = (value: unknown): string => {
     value instanceof PromiseInstanceMethodReference ||
     value instanceof PromiseNamespace ||
     value instanceof PromiseCapabilityFunction ||
-    value instanceof ErrorConstructorReference
+    value instanceof ErrorConstructorReference ||
+    value instanceof SymbolNamespace
   )
     return "function"
   if (value instanceof UriFunction || value instanceof SearchFunction) return "function"

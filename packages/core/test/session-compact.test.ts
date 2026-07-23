@@ -49,14 +49,22 @@ const client = Layer.mock(LLMClient.Service)({
   generate: () => Effect.die("unused"),
 })
 const config = Layer.mock(Config.Service)({ entries: () => Effect.succeed([]) })
-const models = SessionRunnerModel.layerWith(() => Effect.succeed(SessionRunnerModel.resolved(model)))
+const models = Layer.mock(SessionRunnerModel.Service)({
+  resolve: () =>
+    Effect.succeed(
+      SessionRunnerModel.resolved(model, {
+        capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
+        cost: [],
+      }),
+    ),
+})
 const locations = Layer.effect(
   LocationServiceMap.Service,
   LayerMap.make(
     () =>
       // The test only needs the compaction location service used by SessionV2.compact.
       // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
-      SessionCompaction.layer().pipe(
+      SessionCompaction.layer.pipe(
         Layer.provide(client),
         Layer.provide(config),
         Layer.provide(models),

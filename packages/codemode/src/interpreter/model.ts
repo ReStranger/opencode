@@ -1,3 +1,4 @@
+import type { Effect } from "effect"
 import type { SafeObject } from "../tool-runtime.js"
 import type { CodeModePromise, CodeModeRegExp, CodeModeURL } from "../values.js"
 
@@ -36,7 +37,7 @@ export type StatementResult =
 
 export type MemberReference = {
   target: SafeObject | Array<unknown> | CodeModeRegExp | CodeModeURL
-  key: string | number
+  key: PropertyKey
 }
 
 export class CodeModeFunction {
@@ -45,6 +46,27 @@ export class CodeModeFunction {
     readonly body: AstNode,
     readonly capturedScopes: ReadonlyArray<Map<string, Binding>>,
     readonly async: boolean,
+    readonly generator: boolean,
+  ) {}
+}
+
+export type GeneratorRequestKind = "next" | "return" | "throw"
+
+export class CodeModeGenerator {
+  constructor(
+    readonly asynchronous: boolean,
+    readonly request: (
+      kind: GeneratorRequestKind,
+      value: unknown,
+      node: AstNode,
+    ) => Effect.Effect<unknown, unknown, unknown>,
+  ) {}
+}
+
+export class GeneratorMethodReference {
+  constructor(
+    readonly generator: CodeModeGenerator,
+    readonly kind: GeneratorRequestKind | "iterator",
   ) {}
 }
 
@@ -60,6 +82,12 @@ export class ComputedValue {
 }
 
 export class PromiseNamespace {}
+
+export class SymbolNamespace {}
+
+export const AsyncIteratorSymbol: unique symbol = Symbol("codemode.async-iterator")
+export const IteratorSymbol: unique symbol = Symbol("codemode.iterator")
+export const IteratorSymbols = [AsyncIteratorSymbol, IteratorSymbol] as const
 
 export type PromiseMethodName = "all" | "allSettled" | "race" | "any" | "resolve" | "reject"
 
@@ -119,6 +147,10 @@ export class UriFunction {
 export class SearchFunction {}
 
 export class ProgramThrow {
+  constructor(readonly value: unknown) {}
+}
+
+export class GeneratorReturn {
   constructor(readonly value: unknown) {}
 }
 

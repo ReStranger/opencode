@@ -2,10 +2,11 @@ import { createScrollbackWriter } from "@opentui/solid"
 import { TextRenderable, type ColorInput, type ScrollbackRenderContext, type ScrollbackWriter } from "@opentui/core"
 import { Match, Switch, createMemo } from "solid-js"
 import { entryBody, entryFlags } from "./entry.body"
+import { monoMarkdown, monoMarkdownRenderNode, monoMarkdownTableOptions } from "./mono"
 import { entryColor, entryLook, entrySyntax } from "./scrollback.shared"
 import { toolFiletype, toolStructuredFinal } from "./tool"
 import { RUN_THEME_FALLBACK, transparent, type RunTheme } from "./theme"
-import type { EntryLayout, RunEntryBody, ScrollbackOptions, StreamCommit } from "./types"
+import type { EntryLayout, RunEntryBody, ScrollbackOptions, StreamCommit, TurnSummary } from "./types"
 
 export function entryGroupKey(commit: StreamCommit): string | undefined {
   if (!commit.partID) {
@@ -30,7 +31,7 @@ export function sameEntryGroup(left: StreamCommit | undefined, right: StreamComm
   return Boolean(current && next && current === next)
 }
 
-export function entryLayout(commit: StreamCommit, body: RunEntryBody = entryBody(commit)): EntryLayout {
+function entryLayout(commit: StreamCommit, body: RunEntryBody = entryBody(commit)): EntryLayout {
   if (commit.kind === "tool") {
     if (body.type === "structured" || body.type === "markdown") {
       return "block"
@@ -74,7 +75,7 @@ export function RunEntryContent(props: {
   opts?: ScrollbackOptions
 }) {
   const theme = createMemo(() => props.theme ?? RUN_THEME_FALLBACK)
-  const body = createMemo(() => props.body ?? entryBody(props.commit))
+  const body = createMemo(() => props.body ?? entryBody(props.commit, props.opts))
   const style = createMemo(() => entryLook(props.commit, theme().entry))
   const syntax = createMemo(() => entrySyntax(theme()))
   const color = createMemo(() => entryColor(props.commit, theme()))
@@ -239,9 +240,10 @@ export function RunEntryContent(props: {
           width="100%"
           syntaxStyle={syntax()}
           streaming={streaming()}
-          content={markdown()!.content}
+          content={monoMarkdown(markdown()!.content, props.opts?.mono === true)}
           fg={color()}
-          tableOptions={{ widthMode: "content" }}
+          tableOptions={props.opts?.mono ? monoMarkdownTableOptions : { widthMode: "content" }}
+          renderNode={props.opts?.mono ? monoMarkdownRenderNode : undefined}
         />
       </Match>
     </Switch>
@@ -281,7 +283,7 @@ export function spacerWriter(): ScrollbackWriter {
   })
 }
 
-export function turnSummaryWriter(input: { agent: string; model: string; duration: string; theme: RunTheme }) {
+export function turnSummaryWriter(input: TurnSummary & { theme: RunTheme; mono?: boolean }) {
   return createScrollbackWriter(
     () => (
       <box width="100%" height={1}>
@@ -289,7 +291,7 @@ export function turnSummaryWriter(input: { agent: string; model: string; duratio
           <span style={{ fg: input.theme.block.text }}>{input.agent}</span>
           <span style={{ fg: input.theme.block.muted }}>
             {" "}
-            · {input.model} · {input.duration}
+            {input.mono ? "-" : "·"} {input.model} {input.mono ? "-" : "·"} {input.duration}
           </span>
         </text>
       </box>

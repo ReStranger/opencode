@@ -419,6 +419,28 @@ describe("Config", () => {
     }),
   )
 
+  it.effect("migrates v1 interleaved fields to compatibility", () =>
+    Effect.sync(() => {
+      const migrated = ConfigMigrateV1.migrate({
+        provider: {
+          custom: {
+            models: {
+              object: { interleaved: { field: "vendor_reasoning" } },
+              string: { interleaved: "reasoning_text" },
+              boolean: { interleaved: true },
+            },
+          },
+        },
+      })
+
+      expect(migrated.providers?.custom?.models?.object?.compatibility).toEqual({
+        reasoningField: "vendor_reasoning",
+      })
+      expect(migrated.providers?.custom?.models?.string?.compatibility).toEqual({ reasoningField: "reasoning_text" })
+      expect(migrated.providers?.custom?.models?.boolean?.compatibility).toBeUndefined()
+    }),
+  )
+
   it.effect("migrates v1 command configuration", () =>
     Effect.sync(() => {
       expect(
@@ -716,7 +738,7 @@ describe("Config", () => {
                     system: "Find regressions.",
                     mode: "subagent",
                     hidden: false,
-                    color: "warning",
+                    color: "#ff6b6b",
                     steps: 12,
                     disabled: false,
                     permissions: [{ action: "edit", resource: "*", effect: "deny" }],
@@ -802,7 +824,7 @@ describe("Config", () => {
             expect(reviewer?.system).toBe("Find regressions.")
             expect(reviewer?.mode).toBe("subagent")
             expect(reviewer?.hidden).toBe(false)
-            expect(reviewer?.color).toBe("warning")
+            expect(reviewer?.color).toBe("#ff6b6b")
             expect(reviewer?.steps).toBe(12)
             expect(reviewer?.disabled).toBe(false)
             expect(reviewer?.permissions).toEqual([{ action: "edit", resource: "*", effect: "deny" }])

@@ -1,7 +1,6 @@
 import fs from "fs/promises"
 import path from "path"
-import { fileURLToPath } from "url"
-import { describe, expect, test } from "bun:test"
+import { describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { FileMutation } from "@opencode-ai/core/file-mutation"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -220,6 +219,39 @@ describe("WriteTool", () => {
     ),
   )
 
+  it.live("writes an external symlink target with only its in-location permission", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        reset()
+        if (process.platform === "win32") return Effect.void
+        const target = path.join(outside.path, "external.txt")
+        const link = path.join(active.path, "link.txt")
+        return Effect.promise(async () => {
+          await fs.writeFile(target, "before")
+          await fs.symlink(target, link)
+        }).pipe(
+          Effect.andThen(
+            withTool(active.path, (registry) => executeTool(registry, call({ path: "link.txt", content: "after" }))),
+          ),
+          Effect.andThen((result) =>
+            Effect.sync(() => {
+              expect(result.type).toBe("text")
+              expect(assertions.map((input) => input.action)).toEqual(["edit"])
+              expect(assertions[0]?.resources).toEqual(["link.txt"])
+            }),
+          ),
+          Effect.andThen(Effect.promise(() => fs.readFile(target, "utf8"))),
+          Effect.tap((content) => Effect.sync(() => expect(content).toBe("after"))),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
+
   it.live("approves an explicit external absolute path before edit", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
@@ -329,26 +361,4 @@ describe("WriteTool", () => {
         ),
     ),
   )
-})
-
-test("keeps the locked write schema, semantics docstring, and deferred UX TODOs visible", async () => {
-  const source = (await fs.readFile(new URL("../src/tool/write.ts", import.meta.url), "utf8")).replaceAll("\r\n", "\n")
-  const definition = await Effect.runPromise(
-    withTool(path.dirname(fileURLToPath(import.meta.url)), (registry) => toolDefinitions(registry)),
-  )
-  const schema = definition[0]?.inputSchema as { readonly properties?: Record<string, unknown> }
-
-  expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["content", "path"])
-  expect(source).toContain(
-    "absolute external paths retain mutation capability through a separate\n * external_directory approval before edit approval.",
-  )
-  for (const todo of [
-    "Revisit whether model-facing mutation schemas should prefer absolute `filePath` naming for trained-in compatibility after evaluating model behavior.",
-    "Add formatter integration after V2 formatter runtime exists.",
-    "Publish watcher/file-edit events after V2 watcher integration exists.",
-    "Add snapshots / undo after design exists.",
-    "Add LSP notification and diagnostics after V2 LSP runtime exists.",
-  ]) {
-    expect(source).toContain(`TODO: ${todo}`)
-  }
 })

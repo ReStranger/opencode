@@ -194,7 +194,6 @@ function tab(child: ChildState): FooterSubagentTab {
     status: child.status,
     background: child.background ? true : undefined,
     title: child.title,
-    lastUpdatedAt: child.lastUpdatedAt,
   }
 }
 
@@ -838,8 +837,9 @@ export function createSubagentTracker(input: SubagentTrackerInput): SubagentTrac
             ? {
                 status: "error",
                 input: part && part.state.status !== "streaming" ? part.state.input : {},
-                structured: part && part.state.status !== "streaming" ? part.state.structured : {},
-                content: part && part.state.status !== "streaming" ? part.state.content : [],
+                structured:
+                  event.data.metadata ?? (part && part.state.status !== "streaming" ? part.state.structured : {}),
+                content: event.data.content ?? (part && part.state.status !== "streaming" ? part.state.content : []),
                 error: event.data.error,
                 result: event.data.result,
               }
@@ -958,15 +958,16 @@ export function createSubagentTracker(input: SubagentTrackerInput): SubagentTrac
         if (pendingCalls.has(key)) pendingCalls.set(key, event.data.input)
         return
       }
-      if (event.type === "session.tool.failed") {
-        pendingCalls.delete(sourceKey(event.data.assistantMessageID, event.data.callID))
+      if (
+        event.type !== "session.tool.progress" &&
+        event.type !== "session.tool.success" &&
+        event.type !== "session.tool.failed"
+      )
         return
-      }
-      if (event.type !== "session.tool.progress" && event.type !== "session.tool.success") return
       const key = sourceKey(event.data.assistantMessageID, event.data.callID)
       const pending = pendingCalls.get(key)
-      if (event.type === "session.tool.success") pendingCalls.delete(key)
-      const found = childSessionID(record(event.data.structured))
+      if (event.type !== "session.tool.progress") pendingCalls.delete(key)
+      const found = childSessionID(record(event.type === "session.tool.failed" ? event.data.metadata : event.data.structured))
       if (!found) return
       const child = admitChild(found.sessionID)
       if (!child) return
@@ -1084,11 +1085,11 @@ export function createSubagentTracker(input: SubagentTrackerInput): SubagentTrac
       input.emit()
     },
     snapshot() {
-      const tabs = [...children.values()].map(tab).toSorted((a, b) => {
+      const tabs = [...children.values()].toSorted((a, b) => {
         const active = Number(b.status === "running") - Number(a.status === "running")
         if (active !== 0) return active
         return b.lastUpdatedAt - a.lastUpdatedAt
-      })
+      }).map(tab)
       const child = selected ? children.get(selected) : undefined
       const details: Record<string, FooterSubagentDetail> =
         child && !child.detailStale ? { [child.sessionID]: { commits: child.frames.map((item) => item.commit) } } : {}

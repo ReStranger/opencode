@@ -8,7 +8,7 @@ import type { LocationRef } from "@opencode-ai/client/promise"
 import { resolve } from "../config"
 import { loadRunProviders } from "./catalog.shared"
 import { resolveCurrentSession, sessionHistory } from "./session.shared"
-import type { RunInput, RunPrompt, RunProvider, RunTuiConfig } from "./types"
+import type { MiniSettings, RunInput, RunPrompt, RunProvider, RunTuiConfig } from "./types"
 import { pickVariant } from "./variant.shared"
 
 export type ModelInfo = {
@@ -82,4 +82,15 @@ export async function resolveRunTuiConfig(
   return Promise.resolve(config)
     .then((value) => value ?? defaultRunTuiConfig(platform))
     .catch(() => defaultRunTuiConfig(platform))
+}
+
+export function resolveMiniSettings(config?: { mini?: Partial<MiniSettings> }): MiniSettings {
+  return {
+    thinking: config?.mini?.thinking ?? "hide",
+    shell_output: config?.mini?.shell_output ?? "hide",
+    turn_summary: config?.mini?.turn_summary ?? "show",
+    footer: config?.mini?.footer ?? "show",
+    splash: config?.mini?.splash ?? "show",
+    mono: config?.mini?.mono ?? false,
+  }
 }

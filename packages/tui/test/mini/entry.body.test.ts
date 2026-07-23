@@ -43,20 +43,21 @@ function structured(next: StreamCommit) {
 
 describe("run entry body", () => {
   test("renders a failed direct shell as an error instead of completed success", () => {
-    expect(
-      entryBody(
-        commit({
-          kind: "tool",
-          text: "Shell exited with code 7",
-          phase: "final",
-          source: "tool",
-          tool: "shell",
-          toolState: "error",
-          toolError: "Shell exited with code 7",
-          shell: { command: "false" },
-        }),
-      ),
-    ).toEqual({ type: "text", content: "✖ shell failed: Shell exited with code 7" })
+    const failed = commit({
+      kind: "tool",
+      text: "Shell exited with code 7",
+      phase: "final",
+      source: "tool",
+      tool: "shell",
+      toolState: "error",
+      toolError: "Shell → exited · code 7",
+      shell: { command: "false" },
+    })
+    expect(entryBody(failed)).toEqual({ type: "text", content: "✖ shell failed: Shell → exited · code 7" })
+    expect(entryBody(failed, { mono: true })).toEqual({
+      type: "text",
+      content: "! shell failed: Shell → exited · code 7",
+    })
   })
 
   test("renders assistant, reasoning, and user entries in their display formats", () => {
@@ -114,6 +115,11 @@ describe("run entry body", () => {
       type: "text",
       content: "› Inspect footer tabs",
     })
+    expect(
+      entryBody(commit({ kind: "user", text: "Inspect footer tabs", phase: "start", source: "system" }), {
+        mono: true,
+      }),
+    ).toEqual({ type: "text", content: "> Inspect footer tabs" })
   })
 
   for (const item of [
@@ -389,7 +395,6 @@ describe("run entry body", () => {
       type: "text",
       content: "$ pwd",
     })
-
     expect(
       entryBody(
         commit({
@@ -408,6 +413,15 @@ describe("run entry body", () => {
     ).toEqual({
       type: "text",
       content: "\n/tmp/demo",
+    })
+  })
+
+  test("hides shell tool output but not direct shell output", () => {
+    const output = commit({ kind: "tool", text: "output", phase: "progress", source: "tool", tool: "shell" })
+    expect(entryBody(output, { shellOutput: false })).toEqual({ type: "none" })
+    expect(entryBody({ ...output, shell: { command: "pwd" } }, { shellOutput: false })).toEqual({
+      type: "text",
+      content: "\noutput",
     })
   })
 

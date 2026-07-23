@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { OpenCode } from "@opencode-ai/client/promise"
 import type { Resolved } from "../../src/config"
-import { resolveModelInfo, resolveRunTuiConfig } from "../../src/mini/runtime.boot"
+import { resolveMiniSettings, resolveModelInfo, resolveRunTuiConfig } from "../../src/mini/runtime.boot"
 import { catalogModel, catalogProvider } from "./fixture/catalog"
-import { createTuiResolvedConfig } from "./fixture/tui-runtime"
+import { createTuiResolvedConfig } from "../fixture/tui-runtime"
 
 function config(input?: {
   leader?: string
@@ -21,7 +21,7 @@ function config(input?: {
 }): Resolved {
   const bind = input?.bindings
   return createTuiResolvedConfig({
-    leader_timeout: input?.leaderTimeout,
+    leader: input?.leaderTimeout === undefined ? undefined : { timeout: input.leaderTimeout },
     keybinds: {
       ...(input?.leader && { leader: input.leader }),
       ...(bind?.commandList && { command_list: bind.commandList }),
@@ -91,18 +91,43 @@ describe("run runtime boot", () => {
     expect(result.keybinds.get("leader")).toEqual([])
   })
 
-  test("preserves current theme mode, leader, and thinking config", async () => {
+  test("preserves shared config while resolving independent Mini defaults", async () => {
     const result = await resolveRunTuiConfig(
       createTuiResolvedConfig({
         theme: { mode: "light" },
-        leader_timeout: 450,
-        session: { thinking: "hide" },
+        leader: { timeout: 450 },
       }),
     )
 
     expect(result.theme).toEqual({ mode: "light" })
     expect(result.leader.timeout).toBe(450)
-    expect(result.session?.thinking).toBe("hide")
+    expect(resolveMiniSettings(result)).toEqual({
+      thinking: "hide",
+      shell_output: "hide",
+      turn_summary: "show",
+      footer: "show",
+      splash: "show",
+      mono: false,
+    })
+    expect(
+      resolveMiniSettings({
+        mini: {
+          thinking: "show",
+          shell_output: "show",
+          turn_summary: "hide",
+          footer: "hide",
+          splash: "hide",
+          mono: true,
+        },
+      }),
+    ).toEqual({
+      thinking: "show",
+      shell_output: "show",
+      turn_summary: "hide",
+      footer: "hide",
+      splash: "hide",
+      mono: true,
+    })
   })
 
   test("loads v2 providers and models for model selector data", async () => {

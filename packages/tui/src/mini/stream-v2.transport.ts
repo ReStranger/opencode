@@ -46,6 +46,7 @@ type StreamInput = {
   replayLimit?: number
   footer: FooterApi
   onCommit?: (commit: StreamCommit) => void
+  onSessionTitle?: (title: string) => void
   trace?: Trace
   signal?: AbortSignal
   onCatalogRefresh?: (signal?: AbortSignal) => unknown | Promise<unknown>
@@ -379,7 +380,19 @@ async function resolveSelectedModel(
     .then((response) => response.model)
   if (session) return { ...session, variant: next.variant }
 
-  const fallback = await sdk.model.default(undefined, { signal: next.signal }).then((response) => response.data)
+  const fallback = await sdk.model
+    .default(
+      input.location
+        ? {
+            location: {
+              directory: input.location.directory,
+              workspace: input.location.workspaceID,
+            },
+          }
+        : undefined,
+      { signal: next.signal },
+    )
+    .then((response) => response.data)
   if (!fallback) return
   return { providerID: fallback.providerID, id: fallback.id, variant: next.variant }
 }
@@ -758,10 +771,12 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
       client.session.active(options),
     ])
     if (!current(attempt)) return
-    state.pending = new Map(pending.flatMap((item) => {
-      const prompt = pendingPrompt(item)
-      return prompt ? [[prompt.messageID, prompt] as const] : []
-    }))
+    state.pending = new Map(
+      pending.flatMap((item) => {
+        const prompt = pendingPrompt(item)
+        return prompt ? [[prompt.messageID, prompt] as const] : []
+      }),
+    )
     syncPending()
     state.permissions = permissions
     pruneToolSources()
@@ -826,6 +841,10 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
     }
     input.trace?.write("recv.event", event)
     subagents.main(client, event, attempt.signal)
+    if (event.type === "session.renamed") {
+      input.onSessionTitle?.(event.data.title)
+      return
+    }
     if (event.type === "session.input.admitted") {
       if (event.data.input.type !== "user") return
       mergePending({
@@ -1065,8 +1084,9 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
           ? {
               status: "error",
               input: part && part.state.status !== "streaming" ? part.state.input : {},
-              structured: part && part.state.status !== "streaming" ? part.state.structured : {},
-              content: part && part.state.status !== "streaming" ? part.state.content : [],
+              structured:
+                event.data.metadata ?? (part && part.state.status !== "streaming" ? part.state.structured : {}),
+              content: event.data.content ?? (part && part.state.status !== "streaming" ? part.state.content : []),
               error: event.data.error,
               result: event.data.result,
             }
@@ -1534,6 +1554,8 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
         throw new Error("This prompt cannot be queued")
       if (!state.connected) throw new Error("Event stream is reconnecting")
       const client = sdk
+      if (next.agent)
+        await client.session.switchAgent({ sessionID: input.sessionID, agent: next.agent }, { signal: next.signal })
       mergePending(await admitPrompt(next, client, "queue"))
       settlementClient = client
     },
@@ -1555,6 +1577,8 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
 
       const command = next.prompt.command
       if (command?.source === "skill") {
+        if (next.agent)
+          await client.session.switchAgent({ sessionID: input.sessionID, agent: next.agent }, { signal: next.signal })
         input.trace?.write("send.skill", { sessionID: input.sessionID, messageID, skill: command.name })
         await runTurnWait(
           next,

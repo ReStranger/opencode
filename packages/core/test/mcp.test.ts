@@ -136,6 +136,7 @@ function resourceServer(
       return {
         state,
         url: http.url.toString(),
+        clientVersion: () => protocol.getClientVersion(),
         sendResourceListChanged: () => protocol.sendResourceListChanged(),
         completeElicitation: () => protocol.createElicitationCompletionNotifier("elicitation-test")(),
         close: async () => {
@@ -151,10 +152,11 @@ function resourceServer(
 function resourceMcpLayer(
   server: string | typeof ConfigMCP.Server.Type,
   onFormCreated?: (form: Form.Info) => Effect.Effect<void>,
+  options?: MCP.Options,
 ) {
   const directory = AbsolutePath.make(import.meta.dir)
   const unusedIntegration = () => Effect.die("unused integration service")
-  return MCP.layer.pipe(
+  return MCP.layer(options).pipe(
     Layer.provideMerge(Form.layer),
     Layer.provide(
       Layer.mergeAll(
@@ -643,7 +645,12 @@ test("loads and reads MCP resources", async () => {
               { type: "blob", uri: "docs://logo", blob: "aGVsbG8=", mimeType: "image/png" },
             ],
           })
-        }).pipe(Effect.provide(resourceMcpLayer(server.url)))
+          expect(server.clientVersion()).toMatchObject({ name: "sdk", version: "1.2.3" })
+        }).pipe(
+          Effect.provide(
+            resourceMcpLayer(server.url, undefined, { clientInfo: { name: "sdk", version: "1.2.3" } }),
+          ),
+        )
       }),
     ),
   )
@@ -767,9 +774,10 @@ it.effect("advertises MCP output schemas to Code Mode", () =>
   Effect.gen(function* () {
     const registry = yield* ToolRegistry.Service
     yield* waitForTool(registry, "execute")
-    const execute = (yield* toolDefinitions(registry)).find((tool) => tool.name === "execute")
+    const materialized = yield* registry.materialize()
+    const execute = materialized.definitions.find((tool) => tool.name === "execute")
 
-    expect(execute?.description).toContain("tools.demo.search(input: {}): Promise<{\n  ok: boolean,\n}>")
+    expect(execute?.description).not.toContain("tools.demo.search")
   }),
 )
 

@@ -5,7 +5,7 @@ import { ToolFailure } from "@opencode-ai/ai"
 import { Context, Duration, Effect, Layer, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { makeLocationNode } from "@opencode-ai/util/effect/app-node"
-import { InstallationVersion } from "@opencode-ai/util/installation/version"
+import { App } from "../app"
 import { PositiveInt } from "../schema"
 import { PermissionV2 } from "../permission"
 import { Tool } from "./tool"
@@ -190,6 +190,9 @@ const Output = Schema.Struct({
   provider: Provider,
   text: Schema.String,
 })
+const StructuredOutput = Schema.Struct({
+  provider: Output.fields.provider,
+})
 
 export const Plugin = {
   id: "opencode.tool.websearch",
@@ -206,6 +209,8 @@ export const Plugin = {
             description,
             input: Input,
             output: Output,
+            structured: StructuredOutput,
+            toStructuredOutput: ({ output }) => ({ provider: output.provider }),
             toModelOutput: ({ output }) => [{ type: "text", text: output.text }],
             execute: (input, context) => {
               const provider = selectProvider(context.sessionID, config, config.provider)
@@ -241,7 +246,7 @@ export const Plugin = {
                           // V2 invocation context does not safely expose the model yet.
                         },
                         {
-                          "User-Agent": `opencode/${InstallationVersion}`,
+                          "User-Agent": App.useragent(ctx.app),
                           ...(config.parallelApiKey ? { Authorization: `Bearer ${config.parallelApiKey}` } : {}),
                         },
                       )

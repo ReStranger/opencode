@@ -9,6 +9,7 @@ import { ServerConnection } from "../../services/server-connection"
 import { Updater } from "../../services/updater"
 import { UpdatePreflight } from "../../services/update-preflight"
 import { Npm } from "@opencode-ai/util/npm"
+import { OPENCODE_CHANNEL, OPENCODE_VERSION } from "../../version"
 
 export default Runtime.handler(Commands, (input) =>
   Effect.gen(function* () {
@@ -44,6 +45,7 @@ export default Runtime.handler(Commands, (input) =>
     const runPromise = Effect.runPromiseWith(context)
     const service = server.service
     yield* run({
+      app: { name: process.env.OPENCODE_CLIENT ?? "cli", version: OPENCODE_VERSION, channel: OPENCODE_CHANNEL },
       server: {
         endpoint: server.endpoint,
         service: service
@@ -53,7 +55,11 @@ export default Runtime.handler(Commands, (input) =>
             }
           : undefined,
       },
-      args: { continue: input.continue, sessionID: Option.getOrUndefined(input.session) },
+      args: {
+        continue: input.continue,
+        sessionID: Option.getOrUndefined(input.session),
+        prompt: Option.getOrUndefined(input.prompt),
+      },
       config: {
         path: config.path,
         get: () => runPromise(config.get()),

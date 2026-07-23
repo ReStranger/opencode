@@ -11,13 +11,15 @@
 import path from "path"
 import { CliRenderEvents, createCliRenderer, type CliRenderer, type ScrollbackWriter } from "@opentui/core"
 import { isDefaultTitle } from "../util/session"
-import { Locale } from "../util/locale"
+import { monoSnapshot } from "./mono"
 import { entrySplash, exitSplash, splashMeta } from "./splash"
 import { resolveRunTheme } from "./theme"
 import type {
   FooterApi,
   FormCancel,
   FormReply,
+  MiniSettingChange,
+  MiniSettings,
   MiniHost,
   PermissionReply,
   RunAgent,
@@ -26,6 +28,7 @@ import type {
   RunReference,
   RunTuiConfig,
 } from "./types"
+import { resolveMiniSettings } from "./runtime.boot"
 import { formatModelLabel } from "./variant.shared"
 
 const FOOTER_HEIGHT = 4
@@ -40,11 +43,6 @@ type CycleResult = {
   status?: string
   variant?: string | undefined
   variants?: string[]
-}
-
-type FooterLabels = {
-  agentLabel: string
-  modelLabel: string
 }
 
 export type LifecycleInput = {
@@ -62,10 +60,12 @@ export type LifecycleInput = {
   model: RunInput["model"]
   variant: string | undefined
   tuiConfig: RunTuiConfig | Promise<RunTuiConfig>
+  onMiniSettingChange?: (change: MiniSettingChange) => Promise<MiniSettings>
   onPermissionReply: (input: PermissionReply) => void | Promise<void>
   onFormReply: (input: FormReply) => void | Promise<void>
   onFormCancel: (input: FormCancel) => void | Promise<void>
   onCycleVariant?: () => CycleResult | void
+  onAgentSelect?: (agent: string) => void
   onModelSelect?: (model: NonNullable<RunInput["model"]>) => CycleResult | void | Promise<CycleResult | void>
   onVariantSelect?: (variant: string | undefined) => CycleResult | void | Promise<CycleResult | void>
   onInterrupt?: () => void
@@ -78,6 +78,7 @@ export type Lifecycle = {
   footer: FooterApi
   onResize(fn: () => void): () => void
   refreshTheme(): void
+  setTitle(title?: string): void
   resetForReplay(input: { sessionTitle?: string; sessionID?: string; history: RunPrompt[] }): Promise<void>
   close(input: { showExit: boolean; sessionTitle?: string; sessionID?: string; history?: RunPrompt[] }): Promise<void>
 }
@@ -118,14 +119,6 @@ function splashInfo(title: string | undefined, history: RunPrompt[]) {
   }
 }
 
-function footerLabels(input: Pick<RunInput, "agent" | "model" | "variant">): FooterLabels {
-  const agentLabel = Locale.titlecase(input.agent ?? "build")
-  return {
-    agentLabel,
-    modelLabel: input.model ? formatModelLabel(input.model, input.variant) : "",
-  }
-}
-
 function directoryLabel(directory: string, home: string) {
   const resolved = path.resolve(directory)
   const display =
@@ -160,6 +153,9 @@ function queueSplash(
 // the entry splash, RunFooter takes over the footer region.
 export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lifecycle> {
   const footerTask = import("./footer")
+  const tuiConfig = await input.tuiConfig
+  const miniSettings = resolveMiniSettings(tuiConfig)
+  const mono = miniSettings.mono
   const renderer = await createCliRenderer({
     stdin: input.host.terminal.stdin,
     targetFps: 30,
@@ -168,15 +164,23 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
     autoFocus: false,
     openConsoleOnError: false,
     exitOnCtrlC: false,
-    useKittyKeyboard: { events: input.host.platform === "win32" },
+    useKittyKeyboard: mono
+      ? { disambiguate: false, alternateKeys: false, events: false, allKeysAsEscapes: false, reportText: false }
+      : { events: input.host.platform === "win32" },
     screenMode: "split-footer",
     footerHeight: FOOTER_HEIGHT,
     externalOutputMode: "capture-stdout",
     consoleMode: "disabled",
     clearOnShutdown: false,
   })
-  const tuiConfig = await input.tuiConfig
-  const theme = await resolveRunTheme(renderer, tuiConfig.theme)
+  if (mono) renderer.on(CliRenderEvents.EXTERNAL_OUTPUT, monoSnapshot)
+  const setTitle = (title?: string) => {
+    if (input.host.platform !== "linux") return
+    if (!title || isDefaultTitle(title)) return renderer.setTerminalTitle("OpenCode")
+    renderer.setTerminalTitle(`OC | ${title.length > 40 ? title.slice(0, 37) + "..." : title}`)
+  }
+  setTitle(input.sessionTitle)
+  const theme = await resolveRunTheme(renderer, tuiConfig.theme, mono)
   renderer.setBackgroundColor(theme.background)
   const state: SplashState = {
     entry: false,
@@ -186,22 +190,21 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
   const meta = splashMeta({
     title: splash.title,
     session_id: input.sessionID,
-  })
-  const labels = footerLabels({
-    agent: input.agent,
-    model: input.model,
-    variant: input.variant,
+    mono,
   })
   const wrote = queueSplash(
     renderer,
     state,
     "entry",
-    entrySplash({
-      ...meta,
-      theme: theme.splash,
-      showSession: splash.showSession,
-      detail: directoryLabel(input.getDirectory(), input.host.paths.home),
-    }),
+    miniSettings.splash === "show"
+      ? entrySplash({
+          ...meta,
+          theme: theme.splash,
+          showSession: splash.showSession,
+          detail: directoryLabel(input.getDirectory(), input.host.paths.home),
+          mono,
+        })
+      : undefined,
   )
   await renderer.idle().catch(() => {})
 
@@ -215,19 +218,27 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
     findFiles: input.findFiles,
     agents: input.agents,
     references: input.references,
-    sessionID: input.getSessionID ?? (() => input.sessionID),
-    ...labels,
+    agent: input.agent,
+    modelLabel: input.model ? formatModelLabel(input.model, input.variant) : "Default model",
     model: input.model,
     variant: input.variant,
     first: input.first,
     history: input.history,
     theme,
-    wrote,
+    mono,
+    // The transcript always starts one row below the terminal's prior output,
+    // even when the entry splash itself is hidden.
+    wrote: wrote || miniSettings.splash === "hide",
     tuiConfig,
+    miniSettings: {
+      current: miniSettings,
+      update: input.onMiniSettingChange,
+    },
     onPermissionReply: input.onPermissionReply,
     onFormReply: input.onFormReply,
     onFormCancel: input.onFormCancel,
     onCycleVariant: input.onCycleVariant,
+    onAgentSelect: input.onAgentSelect,
     onModelSelect: input.onModelSelect,
     onVariantSelect: input.onVariantSelect,
     onInterrupt: input.onInterrupt,
@@ -299,8 +310,7 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
     try {
       await footer.idle().catch(() => {})
 
-      const show = renderer.isDestroyed ? false : next.showExit
-      if (!renderer.isDestroyed && show) {
+      if (!renderer.isDestroyed && next.showExit && footer.currentMiniSettings().splash === "show") {
         const sessionID = next.sessionID || input.getSessionID?.() || input.sessionID
         const splash = splashInfo(next.sessionTitle ?? input.sessionTitle, next.history ?? input.history)
         wroteExit = queueSplash(
@@ -311,8 +321,10 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
             ...splashMeta({
               title: splash.title,
               session_id: sessionID,
+              mono,
             }),
             theme: footer.currentTheme().splash,
+            mono,
           }),
         )
         await renderer.idle().catch(() => {})
@@ -321,6 +333,8 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
       footer.close()
       await footer.idle().catch(() => {})
       footer.destroy()
+      if (input.host.platform === "linux") renderer.setTerminalTitle("")
+      if (mono) renderer.off(CliRenderEvents.EXTERNAL_OUTPUT, monoSnapshot)
       shutdown(renderer)
       if (!wroteExit) {
         input.host.stdout.write("\n")
@@ -333,6 +347,7 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
     refreshTheme() {
       footer.refreshTheme()
     },
+    setTitle,
     onResize(fn) {
       let width = renderer.terminalWidth
       let height = renderer.terminalHeight
@@ -366,10 +381,12 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
           ...splashMeta({
             title: splash.title,
             session_id: next.sessionID ?? input.getSessionID?.() ?? input.sessionID,
+            mono,
           }),
           theme: footer.currentTheme().splash,
           showSession: splash.showSession,
           detail: directoryLabel(input.getDirectory(), input.host.paths.home),
+          mono,
         }),
       )
       renderer.requestRender()

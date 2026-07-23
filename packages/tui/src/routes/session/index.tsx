@@ -22,7 +22,7 @@ import { useData } from "../../context/data"
 import { SplitBorder } from "../../ui/border"
 import { useTuiPaths, useTuiTerminalEnvironment } from "../../context/runtime"
 import { Spinner, SPINNER_FRAMES } from "../../component/spinner"
-import { useTheme } from "../../context/theme"
+import { ThemeContextProvider, useTheme } from "../../context/theme"
 import { BoxRenderable, ScrollBoxRenderable, addDefaultParsers, TextAttributes, RGBA } from "@opentui/core"
 import { Prompt, type PromptRef } from "../../component/prompt"
 import type {
@@ -84,6 +84,7 @@ import { createSessionRows, messageBoundaryIDs, resolvePart, type PartRef, type 
 import { switchLabel } from "../../util/model"
 import { findMessageBoundary, messageNavigationSlack } from "./message-navigation"
 import { stringWidth } from "../../util/string-width"
+import { useArgs } from "../../context/args"
 
 addDefaultParsers(parsers.parsers)
 
@@ -120,6 +121,7 @@ export function Session() {
   const { navigate } = useRoute()
   const data = useData()
   const local = useLocal()
+  const args = useArgs()
   const paths = useTuiPaths()
   const configState = useConfig()
   const config = configState.data
@@ -216,6 +218,7 @@ export function Session() {
   const boundaries = createMemo(() => messageBoundaryIDs(rows, messages()))
   const [navigationMessage, setNavigationMessage] = createSignal<string>()
   const [navigationSlack, setNavigationSlack] = createSignal(0)
+  const [synced, setSynced] = createSignal(false)
 
   const clearMessageNavigation = () => {
     setNavigationSlack(0)
@@ -242,6 +245,7 @@ export function Session() {
 
   createEffect(() => {
     if (client.connection.status() !== "connected") return
+    setSynced(false)
     const sessionID = route.sessionID
     void (async () => {
       await Promise.all([
@@ -261,6 +265,7 @@ export function Session() {
       }
       editor.reconnect(info.location.directory)
       if (route.sessionID === sessionID && scroll) scroll.scrollBy(100_000)
+      setSynced(true)
     })().catch((error) => {
       if (route.sessionID !== sessionID) return
       toast.show({
@@ -273,15 +278,25 @@ export function Session() {
   })
 
   let seeded = false
+  let sent = false
   let scroll: ScrollBoxRenderable
-  let prompt: PromptRef | undefined
+  const [prompt, setPrompt] = createSignal<PromptRef>()
   const bind = (r: PromptRef | undefined) => {
-    prompt = r
+    setPrompt(r)
     promptRef.set(r)
     if (seeded || !route.prompt || !r) return
     seeded = true
     r.set(route.prompt)
   }
+
+  createEffect(() => {
+    const current = prompt()
+    if (sent || !current || !synced() || !local.model.ready) return
+    if (!local.agent.current() || !local.model.current()) return
+    if (!args.prompt || route.prompt?.text !== args.prompt || current.current.text !== args.prompt) return
+    sent = true
+    current.submit()
+  })
   const dialog = useDialog()
   const renderer = useRenderer()
   const unavailable = (feature: string) => {
@@ -526,7 +541,7 @@ export function Session() {
         void client.api.session.revert
           .stage({ sessionID: route.sessionID, messageID: message.id })
           .catch((error) => toast.show({ message: errorMessage(error), variant: "error", duration: 5000 }))
-        prompt?.set({
+        prompt()?.set({
           ...projectedPromptInput(message),
           pasted: [],
         })
@@ -747,23 +762,6 @@ export function Session() {
             options.format === "markdown"
               ? formatSessionTranscript(sessionData, messages(), options.thinking)
               : await (async () => {
-                  if (options.debug) {
-                    const events: { readonly created: number }[] = []
-                    for await (const event of client.api.session.log({ sessionID: sessionData.id, follow: false })) {
-                      if (event.type !== "log.synced") events.push(event)
-                    }
-                    // Durable events stay in aggregate order even when their wall-clock timestamps differ.
-                    client.connection.internal.history().forEach((event) => {
-                      const index = events.findIndex((item) => item.created > event.created)
-                      if (index === -1) {
-                        events.push(event)
-                        return
-                      }
-                      events.splice(index, 0, event)
-                    })
-                    return JSON.stringify({ info: sessionData, events }, null, 2) + EOL
-                  }
-
                   const messages: unknown[] = []
                   let cursor: string | undefined
                   do {
@@ -2352,15 +2350,26 @@ function StatusBadge(props: { children: string }) {
   )
 }
 
-function BlockTool(props: {
+type BlockToolProps = {
   title?: string
   path?: { label: string; value: string }
   children?: JSX.Element
   onClick?: () => void
   part?: SessionMessageAssistantTool
   spinner?: boolean
-}) {
-  const { themeV2 } = useTheme().contextual("elevated")
+}
+
+function BlockTool(props: BlockToolProps) {
+  const parentTheme = useTheme()
+  return (
+    <ThemeContextProvider context="elevated">
+      <BlockToolContent {...props} borderColor={parentTheme.themeV2.background.default} />
+    </ThemeContextProvider>
+  )
+}
+
+function BlockToolContent(props: BlockToolProps & { borderColor: RGBA }) {
+  const { themeV2 } = useTheme()
   const ctx = use()
   const data = useData()
   const renderer = useRenderer()
@@ -2380,7 +2389,7 @@ function BlockTool(props: {
       gap={1}
       backgroundColor={hover() ? themeV2.raise(themeV2.background.default) : themeV2.background.default}
       customBorderChars={SplitBorder.customBorderChars}
-      borderColor={themeV2.background.default}
+      borderColor={props.borderColor}
       onMouseOver={() => props.onClick && setHover(true)}
       onMouseOut={() => setHover(false)}
       onMouseUp={() => {
@@ -2643,8 +2652,7 @@ function WebFetch(props: ToolProps) {
 function WebSearch(props: ToolProps) {
   return (
     <InlineTool icon="◈" pending="Searching web..." complete={stringValue(props.input.query)} part={props.part}>
-      {webSearchProviderLabel(props.metadata.provider)} "{stringValue(props.input.query)}"{" "}
-      <Show when={finiteNumber(props.metadata.numResults)}>({finiteNumber(props.metadata.numResults)} results)</Show>
+      {webSearchProviderLabel(props.metadata.provider)} "{stringValue(props.input.query)}"
     </InlineTool>
   )
 }

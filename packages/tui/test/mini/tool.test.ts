@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { normalizeTool, toolOutputText, toolPath } from "../../src/mini/tool"
+import { normalizeTool, toolInlineInfo, toolOutputText, toolPath, toolScroll } from "../../src/mini/tool"
+import { canonicalToolPart } from "./fixture/tool-part"
 
 describe("Mini tool presentation", () => {
   test("uses V2 shell output without the model-facing status", () => {
@@ -33,7 +34,7 @@ describe("Mini tool presentation", () => {
                 type: "update",
                 filePath: "/tmp/project/src/a.ts",
                 relativePath: "src/a.ts",
-                diff: "@@ -1 +1 @@\n-old\n+new",
+                patch: "@@ -1 +1 @@\n-old\n+new",
               },
             ],
           },
@@ -71,6 +72,61 @@ describe("Mini tool presentation", () => {
         time: { created: 1, ran: 1 },
       }),
     ).toMatchObject({ name: "subagent", state: { input: { agent: "explore" } } })
+  })
+
+  test("renders the skill name from structured metadata with the input id as fallback", () => {
+    const skill = (structured: { name?: string }) => ({
+      type: "tool" as const,
+      id: "call-skill",
+      name: "skill",
+      state: {
+        status: "completed" as const,
+        input: { id: "tigerstyle" },
+        structured,
+        content: [],
+      },
+      time: { created: 1, ran: 1, completed: 2 },
+    })
+
+    expect(toolInlineInfo(skill({ name: "effect" })).title).toBe('Skill "effect"')
+    expect(toolInlineInfo(skill({})).title).toBe('Skill "tigerstyle"')
+    expect(
+      toolScroll("start", {
+        directory: "/work/project",
+        raw: "",
+        name: "skill",
+        input: { id: "tigerstyle" },
+        meta: { name: "effect" },
+        state: {},
+        status: "completed",
+        error: "",
+        output: "",
+        time: {},
+      }),
+    ).toBe('→ Skill "effect"')
+  })
+
+  test("renders compact search metadata", () => {
+    expect(
+      toolInlineInfo(
+        canonicalToolPart("glob", {
+          status: "completed",
+          input: { pattern: "*.ts" },
+          structured: { count: 3 },
+          content: [],
+        }),
+      ).description,
+    ).toBe("3 matches")
+    expect(
+      toolInlineInfo(
+        canonicalToolPart("grep", {
+          status: "completed",
+          input: { pattern: "needle" },
+          structured: { matches: 1 },
+          content: [],
+        }),
+      ).description,
+    ).toBe("1 match")
   })
 
   test("keeps segment-safe contained tool paths relative", () => {

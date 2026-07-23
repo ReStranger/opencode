@@ -200,6 +200,31 @@ afterEach(() => {
 })
 
 describe("V2 mini transport", () => {
+  test("reports session title changes", async () => {
+    const events = feed()
+    events.push(connected())
+    const titles: string[] = []
+    const transport = await createSessionTransport({
+      sdk: sdk({ streams: [events] }),
+      sessionID: "ses_1",
+      thinking: false,
+      footer: footer().api,
+      onSessionTitle: (title) => titles.push(title),
+    })
+
+    events.push({
+      id: "evt_renamed",
+      created: 1,
+      type: "session.renamed",
+      durable: durable("ses_1", 1),
+      data: { sessionID: "ses_1", title: "Greeting" },
+    })
+
+    while (titles.length === 0) await Bun.sleep(0)
+    expect(titles).toEqual(["Greeting"])
+    await transport.close()
+  })
+
   test("formats footer usage with compact tokens and context percentage", async () => {
     const events = feed()
     events.push(connected())
@@ -599,13 +624,17 @@ describe("V2 mini transport", () => {
       ok({ ...promptAdmission(request), admittedSeq: 2 }) as never,
     )
     await transport.queuePromptTurn({
-      agent: undefined,
+      agent: "review",
       model: undefined,
       variant: undefined,
       prompt: { messageID: "msg_next", text: "another", parts: [] },
       files: [],
       includeFiles: false,
     })
+    expect(client.session.switchAgent).toHaveBeenCalledWith(
+      { sessionID: "ses_1", agent: "review" },
+      expect.anything(),
+    )
     expect(prompt).toHaveBeenCalledWith(expect.objectContaining({ delivery: "queue" }), expect.anything())
     events.push({
       id: "evt_earlier_admission",
@@ -2015,7 +2044,6 @@ describe("V2 mini transport", () => {
       id: "evt_progress",
       created: 3,
       type: "session.tool.progress",
-      durable: durable("ses_1", 2),
       data: {
         sessionID: "ses_1",
         assistantMessageID: "msg_progress",
@@ -2034,6 +2062,8 @@ describe("V2 mini transport", () => {
         assistantMessageID: "msg_progress",
         callID: "call_progress",
         error: { type: "unknown", message: "boom" },
+        metadata: { checkpoint: 1 },
+        content: [{ type: "text", text: "partial" }],
         executed: true,
       },
     })
@@ -2060,12 +2090,13 @@ describe("V2 mini transport", () => {
     const ui = footer()
     const transport = await createSessionTransport({
       sdk: client,
+      location: { directory: "/project", workspaceID: "wrk_1" },
       sessionID: "ses_1",
       thinking: false,
       footer: ui.api,
     })
     spyOn(client.session, "get").mockImplementation(() => ok({ model: undefined }) as never)
-    spyOn(client.model, "default").mockImplementation(
+    const defaultModel = spyOn(client.model, "default").mockImplementation(
       () =>
         ok({
           location: { directory: "/tmp", project: { id: "proj_1", directory: "/tmp" } },
@@ -2111,6 +2142,10 @@ describe("V2 mini transport", () => {
 
     expect(switched).toHaveBeenCalledWith(
       { sessionID: "ses_1", model: { providerID: "openai", id: "gpt-5", variant: "high" } },
+      { signal: undefined },
+    )
+    expect(defaultModel).toHaveBeenCalledWith(
+      { location: { directory: "/project", workspace: "wrk_1" } },
       { signal: undefined },
     )
     await transport.close()
@@ -2684,7 +2719,7 @@ describe("V2 mini transport", () => {
     })
 
     await transport.runPromptTurn({
-      agent: undefined,
+      agent: "review",
       model: undefined,
       variant: undefined,
       prompt: {
@@ -2697,6 +2732,10 @@ describe("V2 mini transport", () => {
       includeFiles: true,
     })
 
+    expect(client.session.switchAgent).toHaveBeenCalledWith(
+      { sessionID: "ses_1", agent: "review" },
+      expect.anything(),
+    )
     expect(request).toMatchObject({ sessionID: "ses_1", id: "msg_skill", skill: "tigerstyle" })
     expect(command).not.toHaveBeenCalled()
     expect(prompt).not.toHaveBeenCalled()
@@ -2806,6 +2845,70 @@ describe("V2 mini transport", () => {
     await transport.close()
   })
 
+  test("discovers a subagent from its terminal failure snapshot", async () => {
+    const events = feed()
+    events.push(connected())
+    const client = sdk({ streams: [events], messages: { ses_child_failed: [] } })
+    const ui = footer()
+    const transport = await createSessionTransport({
+      sdk: client,
+      sessionID: "ses_1",
+      thinking: false,
+      footer: ui.api,
+    })
+    const states = () => ui.events.flatMap((event) => (event.type === "stream.subagent" ? [event.state] : []))
+    events.push({
+      id: "evt_failed_subagent_input",
+      created: 1,
+      type: "session.tool.input.started",
+      durable: durable("ses_1"),
+      data: {
+        sessionID: "ses_1",
+        assistantMessageID: "msg_failed_subagent",
+        callID: "call_failed_subagent",
+        name: "subagent",
+      },
+    })
+    events.push({
+      id: "evt_failed_subagent_called",
+      created: 2,
+      type: "session.tool.called",
+      durable: durable("ses_1", 1),
+      data: {
+        sessionID: "ses_1",
+        assistantMessageID: "msg_failed_subagent",
+        callID: "call_failed_subagent",
+        input: { agent: "explore", description: "Inspect failure", prompt: "inspect" },
+        executed: true,
+      },
+    })
+    events.push({
+      id: "evt_failed_subagent",
+      created: 3,
+      type: "session.tool.failed",
+      durable: durable("ses_1", 2),
+      data: {
+        sessionID: "ses_1",
+        assistantMessageID: "msg_failed_subagent",
+        callID: "call_failed_subagent",
+        error: { type: "unknown", message: "subagent failed" },
+        metadata: { sessionID: "ses_child_failed", status: "running" },
+        executed: true,
+      },
+    })
+
+    while (!states().some((state) => state.tabs.some((tab) => tab.sessionID === "ses_child_failed")))
+      await Bun.sleep(0)
+    expect(states().at(-1)?.tabs).toMatchObject([
+      {
+        sessionID: "ses_child_failed",
+        label: "Explore",
+        description: "Inspect failure",
+      },
+    ])
+    await transport.close()
+  })
+
   test("discovers current subagents from progress and reduces descendant tool state", async () => {
     const events = feed()
     events.push(connected())
@@ -2847,7 +2950,6 @@ describe("V2 mini transport", () => {
       id: "evt_subagent_progress",
       created: 3,
       type: "session.tool.progress",
-      durable: durable("ses_1", 2),
       data: {
         sessionID: "ses_1",
         assistantMessageID: "msg_subagent",
@@ -2899,7 +3001,6 @@ describe("V2 mini transport", () => {
       id: "evt_child_tool_progress",
       created: 6,
       type: "session.tool.progress",
-      durable: durable("ses_child_progress", 2),
       data: {
         sessionID: "ses_child_progress",
         assistantMessageID: "msg_child_tool",
@@ -2930,6 +3031,8 @@ describe("V2 mini transport", () => {
         assistantMessageID: "msg_child_tool",
         callID: "call_child_shell",
         error: { type: "unknown", message: "child boom" },
+        metadata: { checkpoint: "child" },
+        content: [{ type: "text", text: "child partial" }],
         executed: true,
       },
     })

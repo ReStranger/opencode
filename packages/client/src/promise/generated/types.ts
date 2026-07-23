@@ -8,7 +8,7 @@ export type ModelRef = { id: string; providerID: string; variant?: string }
 
 export type ProviderSettings = { [x: string]: JsonValue }
 
-export type AgentColor = string | "primary" | "secondary" | "accent" | "success" | "warning" | "error" | "info"
+export type AgentColor = string
 
 export type PermissionV2Effect = "allow" | "deny" | "ask"
 
@@ -162,6 +162,8 @@ export type SessionMessageProviderState6 = { [x: string]: any }
 export type SessionMessageProviderState7 = { [x: string]: any }
 
 export type EventLogSynced = { type: "log.synced"; aggregateID: string; seq?: number }
+
+export type ModelReasoningField = "reasoning" | "reasoning_content" | "reasoning_text" | (string & {})
 
 export type ModelCapabilities = { tools: boolean; input: Array<string>; output: Array<string> }
 
@@ -1094,7 +1096,7 @@ export type TuiCommandExecute = {
       | "prompt.clear"
       | "prompt.submit"
       | "agent.cycle"
-      | string
+      | (string & {})
   }
 }
 
@@ -1385,23 +1387,7 @@ export type SessionToolCalled = {
   }
 }
 
-export type SessionToolFailed = {
-  id: string
-  created: number
-  metadata?: { [x: string]: any }
-  type: "session.tool.failed"
-  durable: { aggregateID: string; seq: number; version: 1 }
-  location?: LocationRef
-  data: {
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    error: SessionStructuredError
-    result?: any
-    executed: boolean
-    resultState?: SessionMessageProviderState7
-  }
-}
+export type ModelCompatibility = { reasoningField?: ModelReasoningField }
 
 export type ModelCost = {
   tier?: { type: "context"; size: number }
@@ -1847,22 +1833,6 @@ export type SessionMessageToolStateError = {
   result?: JsonValue
 }
 
-export type SessionToolProgress = {
-  id: string
-  created: number
-  metadata?: { [x: string]: any }
-  type: "session.tool.progress"
-  durable: { aggregateID: string; seq: number; version: 1 }
-  location?: LocationRef
-  data: {
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    structured: { [x: string]: any }
-    content: Array<LLMToolContent>
-  }
-}
-
 export type SessionToolSuccess = {
   id: string
   created: number
@@ -1882,6 +1852,41 @@ export type SessionToolSuccess = {
   }
 }
 
+export type SessionToolFailed = {
+  id: string
+  created: number
+  metadata?: { [x: string]: any }
+  type: "session.tool.failed"
+  durable: { aggregateID: string; seq: number; version: 1 }
+  location?: LocationRef
+  data: {
+    sessionID: string
+    assistantMessageID: string
+    callID: string
+    error: SessionStructuredError
+    content?: [LLMToolContent, ...Array<LLMToolContent>]
+    metadata?: { [x: string]: any }
+    result?: any
+    executed: boolean
+    resultState?: SessionMessageProviderState7
+  }
+}
+
+export type SessionToolProgress = {
+  id: string
+  created: number
+  metadata?: { [x: string]: any }
+  type: "session.tool.progress"
+  location?: LocationRef
+  data: {
+    sessionID: string
+    assistantMessageID: string
+    callID: string
+    structured: { [x: string]: any }
+    content: Array<LLMToolContent>
+  }
+}
+
 export type SessionMessageCompaction =
   | SessionMessageCompactionRunning
   | SessionMessageCompactionCompleted
@@ -1893,6 +1898,7 @@ export type ModelInfo = {
   providerID: string
   family?: string
   name: string
+  compatibility?: ModelCompatibility
   package?: string
   settings?: { [x: string]: JsonValue }
   headers?: { [x: string]: string }
@@ -2219,7 +2225,6 @@ export type SessionEventDurable =
   | SessionToolInputStarted
   | SessionToolInputEnded
   | SessionToolCalled
-  | SessionToolProgress
   | SessionToolSuccess
   | SessionToolFailed
   | SessionRetryScheduled

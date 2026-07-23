@@ -31,6 +31,10 @@ export const Output = Schema.Struct({
   status: Schema.Literals(["completed", "running"]),
   output: Schema.String,
 })
+const StructuredOutput = Schema.Struct({
+  sessionID: Output.fields.sessionID,
+  status: Output.fields.status,
+})
 
 export const description = [
   "Spawn a subagent: a child session running a configured agent with fresh context.",
@@ -115,6 +119,8 @@ export const Plugin = {
             description,
             input: Input,
             output: Output,
+            structured: StructuredOutput,
+            toStructuredOutput: ({ output }) => ({ sessionID: output.sessionID, status: output.status }),
             toModelOutput: ({ output }) => [{ type: "text", text: output.output }],
             execute: (input, context) =>
               Effect.gen(function* () {
@@ -185,7 +191,11 @@ export const Plugin = {
 
                 const run = Effect.gen(function* () {
                   // The child session owns its agent/model (set at create); prompt only admits input.
-                  yield* runtime.session.prompt({ sessionID: child.id, text: input.prompt, resume: false })
+                  yield* runtime.session.prompt({
+                    sessionID: child.id,
+                    text: ["You are a subagent spawned by another session.", input.prompt].join("\n"),
+                    resume: false,
+                  })
                   yield* runtime.session.resume(child.id)
                   return yield* latestAssistantText(child.id)
                 }).pipe(Effect.onInterrupt(() => runtime.session.interrupt(child.id)))

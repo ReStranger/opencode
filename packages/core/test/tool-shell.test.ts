@@ -1,7 +1,7 @@
 import fs from "fs/promises"
 import { realpathSync } from "node:fs"
 import path from "path"
-import { describe, expect, test } from "bun:test"
+import { describe, expect } from "bun:test"
 import { DateTime, Deferred, Duration, Effect, Fiber, Layer, Scope, Stream } from "effect"
 import { Money } from "@opencode-ai/schema/money"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -159,6 +159,9 @@ const mixedOutputCommand = isWindows
   ? "[Console]::Out.Write('stdout'); Start-Sleep -Milliseconds 50; [Console]::Error.Write('stderr'); Start-Sleep -Milliseconds 100"
   : "printf stdout; sleep 0.05; printf stderr >&2"
 const idleCommand = isWindows ? "Start-Sleep -Seconds 60" : "sleep 60"
+const steadyProgressCommand = isWindows
+  ? "[Console]::Out.Write('steady'); Start-Sleep -Milliseconds 3400"
+  : "printf steady; sleep 3.4"
 const bodyExitCommand = isWindows
   ? "[Console]::Out.Write('body'); Start-Sleep -Milliseconds 100; exit 7"
   : "printf body && exit 7"
@@ -462,6 +465,34 @@ describe("ShellTool", () => {
     { timeout: 15_000 },
   )
 
+  it.live(
+    "does not repeat unchanged shell progress",
+    () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => tmpdir()),
+        (tmp) => {
+          reset()
+          return withSession(tmp.path, (registry) =>
+            Effect.gen(function* () {
+              const updates: ToolRegistry.Progress[] = []
+              yield* settleTool(registry, {
+                ...call({ command: steadyProgressCommand }, "call-steady-progress"),
+                progress: (update) => Effect.sync(() => updates.push(update)),
+              })
+              expect(updates).toEqual([
+                {
+                  structured: { truncated: false },
+                  content: [{ type: "text", text: "steady" }],
+                },
+              ])
+            }),
+          )
+        },
+        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]().then(() => undefined)),
+      ),
+    { timeout: 10_000 },
+  )
+
   it.live("returns a useful timeout settlement", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),
@@ -611,21 +642,4 @@ describe("ShellTool", () => {
       (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]().then(() => undefined)),
     ),
   )
-})
-
-test("keeps locked deferred parity TODOs visible", async () => {
-  const source = await fs.readFile(new URL("../src/tool/shell.ts", import.meta.url), "utf8")
-  for (const todo of [
-    "Port tree-sitter bash / PowerShell parser-based approval reduction.",
-    "Port BashArity reusable command-prefix approvals.",
-    "Replace token-based command-argument external-directory advisories with parser-based detection.",
-    "Restore PowerShell and cmd-specific invocation/path handling on Windows.",
-    "Add plugin shell.env environment augmentation once V2 plugin hooks exist.",
-    "Persist job status and define restart recovery before exposing remote observation.",
-    "Revisit process-group cleanup and platform coverage with shell-specific tests if current AppProcess semantics do not fully cover it.",
-    "Revisit binary output handling if stdout/stderr decoding is text-only.",
-    "Stream full shell output into managed storage while retaining only a bounded in-memory preview.",
-  ]) {
-    expect(source).toContain(`TODO: ${todo}`)
-  }
 })

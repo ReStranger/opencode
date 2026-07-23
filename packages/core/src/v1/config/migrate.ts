@@ -8,6 +8,7 @@ import { ConfigPermissionV1 } from "./permission"
 import { ConfigProviderV1 } from "./provider"
 import { ConfigProviderOptionsV1 } from "./provider-options"
 import { ProviderV2 } from "../../provider"
+import { ModelV2 } from "../../model"
 
 const keys = new Set([
   "logLevel",
@@ -160,7 +161,7 @@ export function migrateAgent(info: ConfigAgentV1.Info) {
     description: info.description,
     mode: info.mode,
     hidden: info.hidden,
-    color: info.color,
+    color: info.color === undefined ? undefined : info.color.startsWith("#") ? info.color : "#aaaaaa",
     steps: info.steps,
     disabled: info.disable,
     permissions: permissions(info.permission),
@@ -278,6 +279,7 @@ function migrateModel(info: typeof ConfigProviderV1.Model.Type) {
     modelID: info.id,
     family: info.family,
     name: info.name,
+    compatibility: ModelV2.compatibility(info.interleaved),
     package: info.provider?.npm ? ProviderV2.aisdk(info.provider.npm) : undefined,
     settings: info.provider?.api ? { ...settings, baseURL: info.provider.api } : settings,
     capabilities,

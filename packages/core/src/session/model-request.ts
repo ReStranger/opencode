@@ -1,9 +1,11 @@
 export * as SessionModelRequest from "./model-request"
 
-import { LLM, Message, SystemPart, type LLMRequest } from "@opencode-ai/ai"
+import { LLM, Message, SystemPart, type LLMRequest, type ToolContent } from "@opencode-ai/ai"
 import { SessionError } from "@opencode-ai/schema/session-error"
 import { Context, Effect, Layer } from "effect"
 import { makeLocationNode } from "@opencode-ai/util/effect/app-node"
+import { App } from "../app"
+import { ModelV2 } from "../model"
 import { PluginHooks } from "../plugin/hooks"
 import { ToolRegistry } from "../tool/registry"
 import { SessionContext } from "./context"
@@ -26,6 +28,45 @@ interface PrepareInput {
   readonly step: number
 }
 
+const mimeToModality = (mime: string) => {
+  if (mime.startsWith("image/")) return "image"
+  if (mime.startsWith("audio/")) return "audio"
+  if (mime.startsWith("video/")) return "video"
+  if (mime === "application/pdf") return "pdf"
+}
+
+const unsupportedMedia = (mime: string, name: string | undefined, capabilities: ModelV2.Capabilities) => {
+  const modality = mimeToModality(mime)
+  if (!modality || capabilities.input.some((item) => item.startsWith(modality))) return
+  return {
+    type: "text" as const,
+    text: `ERROR: Cannot read ${name ? `"${name}"` : modality} (this model does not support ${modality} input). Inform the user.`,
+  }
+}
+
+export const unsupportedParts = (messages: LLMRequest["messages"], capabilities: ModelV2.Capabilities) =>
+  messages.map((message) =>
+    Message.make({
+      ...message,
+      content: message.content.map((part) => {
+        if (part.type === "media") {
+          return unsupportedMedia(part.mediaType, part.filename, capabilities) ?? part
+        }
+        if (part.type !== "tool-result" || part.result.type !== "content") return part
+        return {
+          ...part,
+          result: {
+            ...part.result,
+            value: part.result.value.map((item: ToolContent) => {
+              if (item.type !== "file") return item
+              return unsupportedMedia(item.mime, item.name, capabilities) ?? item
+            }),
+          },
+        }
+      }),
+    }),
+  )
+
 /**
  * Builds an outbound model request and captures the tool-call capability that
  * must remain paired with it. It does not execute the request or mutate
@@ -39,11 +80,12 @@ export interface Interface {
 /** Location-scoped outbound model-request preparation. */
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/SessionModelRequest") {}
 
-export const layer = (options?: SessionModelHeaders.Options) => Layer.effect(
+export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const hooks = yield* PluginHooks.Service
     const registry = yield* ToolRegistry.Service
+    const app = yield* App.Metadata
 
     const prepare = Effect.fn("SessionModelRequest.prepare")(function* (input: PrepareInput) {
       const session = input.context.session
@@ -81,11 +123,11 @@ export const layer = (options?: SessionModelHeaders.Options) => Layer.effect(
       const request = LLM.request({
         model,
         http: {
-          headers: SessionModelHeaders.make(session, options),
+          headers: SessionModelHeaders.make(session, app),
         },
         providerOptions: { openai: { promptCacheKey } },
         system: contextEvent.system,
-        messages: contextEvent.messages,
+        messages: unsupportedParts(contextEvent.messages, resolved.capabilities),
         tools: hookedTools,
         toolChoice: stepLimitReached ? "none" : undefined,
       })
@@ -112,8 +154,8 @@ export const layer = (options?: SessionModelHeaders.Options) => Layer.effect(
   }),
 )
 
-export function configured(options?: SessionModelHeaders.Options) {
-  return makeLocationNode({ service: Service, layer: layer(options), deps: [PluginHooks.node, ToolRegistry.node] })
-}
-
-export const node = configured()
+export const node = makeLocationNode({
+  service: Service,
+  layer,
+  deps: [PluginHooks.node, ToolRegistry.node, App.node],
+})

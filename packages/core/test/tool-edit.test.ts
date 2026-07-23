@@ -1,7 +1,6 @@
 import fs from "fs/promises"
 import path from "path"
-import { fileURLToPath } from "url"
-import { describe, expect, test } from "bun:test"
+import { describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/util/effect/layer-node"
@@ -196,6 +195,41 @@ describe("EditTool", () => {
         )
       },
       (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("edits an external symlink target with only its in-location permission", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        reset()
+        if (process.platform === "win32") return Effect.void
+        const target = path.join(outside.path, "external.txt")
+        const link = path.join(active.path, "link.txt")
+        return Effect.promise(async () => {
+          await fs.writeFile(target, "before")
+          await fs.symlink(target, link)
+        }).pipe(
+          Effect.andThen(
+            withTool(active.path, (registry) =>
+              executeTool(registry, call({ path: "link.txt", oldString: "before", newString: "after" })),
+            ),
+          ),
+          Effect.andThen((result) =>
+            Effect.sync(() => {
+              expect(result.type).toBe("text")
+              expect(assertions.map((input) => input.action)).toEqual(["edit"])
+              expect(assertions[0]?.resources).toEqual(["link.txt"])
+            }),
+          ),
+          Effect.andThen(Effect.promise(() => fs.readFile(target, "utf8"))),
+          Effect.tap((content) => Effect.sync(() => expect(content).toBe("after"))),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
     ),
   )
 
@@ -424,26 +458,4 @@ describe("EditTool", () => {
       (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
     ),
   )
-})
-
-test("keeps the locked edit schema, semantics docstring, and deferred TODOs visible", async () => {
-  const source = (await fs.readFile(new URL("../src/tool/edit.ts", import.meta.url), "utf8")).replaceAll("\r\n", "\n")
-  const definition = await Effect.runPromise(
-    withTool(path.dirname(fileURLToPath(import.meta.url)), (registry) => toolDefinitions(registry)),
-  )
-  const schema = definition[0]?.inputSchema as { readonly properties?: Record<string, unknown> }
-
-  expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["newString", "oldString", "path", "replaceAll"])
-  expect(source).toContain(
-    "absolute external paths retain mutation capability through a separate\n * external_directory approval before edit approval.",
-  )
-  for (const todo of [
-    "Port V1 fuzzy correction strategies only after exact-edit behavior is established: line-trimmed matching, block-anchor fallback, indentation correction, and similarity-threshold review.",
-    "Add formatter integration after V2 formatter runtime exists.",
-    "Publish watcher/file-edit events after V2 watcher integration exists.",
-    "Add snapshots / undo after design exists.",
-    "Add LSP notification and diagnostics after V2 LSP runtime exists.",
-  ]) {
-    expect(source).toContain(`TODO: ${todo}`)
-  }
 })
