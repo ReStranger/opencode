@@ -23,8 +23,8 @@ const defaultPermissions = [
   { action: "external_directory", resource: "*", effect: "ask" },
 ] satisfies PermissionV2.Ruleset
 
-test("rejects named agent color tokens", () => {
-  expect(() => decode({ agents: { reviewer: { color: "warning" } } })).toThrow()
+test("accepts named agent color tokens", () => {
+  expect(decode({ agents: { reviewer: { color: "warning" } } }).agents?.reviewer?.color).toBe("warning")
 })
 
 describe("ConfigAgentPlugin.Plugin", () => {
