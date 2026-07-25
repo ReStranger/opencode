@@ -63,9 +63,6 @@ export const Plugin = {
             description,
             input: Input,
             output: Output,
-            toModelOutput: ({ input, output }) => [
-              { type: "text", text: toModelOutput(input.questions, output.answers) },
-            ],
             execute: (input, context) =>
               permission
                 .assert({
@@ -94,14 +91,22 @@ export const Plugin = {
                       .pipe(Effect.orDie),
                   ),
                   Effect.flatMap((state) => {
+                    // Deliberate defect tunnel (see PermissionV2.assert): a dismissal must dodge
+                    // leaf `mapError` blankets so it never becomes model-facing tool output; it
+                    // resurfaces as a typed failure at SessionModelRequest.executeTool.
                     if (state.status === "cancelled") return Effect.die(new CancelledError())
-                    return Effect.succeed({
+                    const output = {
                       answers: input.questions.map((_, index): QuestionV2.Answer => {
                         const value = state.answer[`q${index}`]
                         if (value === undefined) return []
                         if (typeof value === "object") return Array.from(value)
                         return [String(value)]
                       }),
+                    }
+                    return Effect.succeed({
+                      output,
+                      content: toModelOutput(input.questions, output.answers),
+                      metadata: { answers: output.answers },
                     })
                   }),
                 ),

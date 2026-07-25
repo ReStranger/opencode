@@ -133,8 +133,8 @@ describe("run entry body", () => {
             path: "src/a.ts",
             content: "const x = 1\n",
           },
-          structured: {},
-          content: [],
+          metadata: {},
+          content: [{ type: "text", text: "" }],
         },
       }),
       snapshot: {
@@ -153,10 +153,10 @@ describe("run entry body", () => {
           input: {
             path: "src/a.ts",
           },
-          structured: {
+          metadata: {
             files: [{ file: "src/a.ts", status: "modified", patch: "@@ -1 +1 @@\n-old\n+new\n" }],
           },
-          content: [],
+          content: [{ type: "text", text: "" }],
         },
       }),
       snapshot: {
@@ -177,8 +177,8 @@ describe("run entry body", () => {
         state: {
           status: "completed",
           input: {},
-          content: [],
-          structured: {
+          content: [{ type: "text", text: "" }],
+          metadata: {
             files: [
               {
                 status: "modified",
@@ -221,8 +221,7 @@ describe("run entry body", () => {
               description: "Inspect reducer",
               agent: "explore",
             },
-            structured: { sessionID: "ses-child-1", status: "running" },
-            content: [],
+            metadata: { sessionID: "ses-child-1", status: "running" },
           },
         }),
       ),
@@ -232,29 +231,28 @@ describe("run entry body", () => {
   })
 
   test("promotes subagent results to markdown and falls back to structured summaries", () => {
-    expect(
-      entryBody(
-        toolCommit({
-          tool: "subagent",
-          state: {
-            status: "completed",
-            input: {
-              description: "Inspect reducer",
-              agent: "explore",
-            },
-            content: [{ type: "text", text: "# Findings\n\n- Footer stays live" }],
-            structured: {
-              sessionID: "ses-child-1",
-              status: "completed",
-              output: "# Findings\n\n- Footer stays live",
-            },
-          },
-        }),
-      ),
-    ).toEqual({
+    const result = toolCommit({
+      tool: "subagent",
+      state: {
+        status: "completed",
+        input: {
+          description: "Inspect reducer",
+          agent: "explore",
+        },
+        content: [{ type: "text", text: "# Findings\n\n- Footer stays live" }],
+        metadata: {
+          sessionID: "ses-child-1",
+          status: "completed",
+          output: "# Findings\n\n- Footer stays live",
+        },
+      },
+    })
+    const markdown = {
       type: "markdown",
       content: "# Findings\n\n- Footer stays live",
-    })
+    } as const
+    expect(entryBody(result)).toEqual(markdown)
+    expect(entryBody(result, { mono: true })).toEqual(markdown)
 
     expect(
       structured(
@@ -266,8 +264,8 @@ describe("run entry body", () => {
               description: "Inspect reducer",
               agent: "explore",
             },
-            content: [],
-            structured: {
+            content: [{ type: "text", text: "" }],
+            metadata: {
               sessionID: "ses-child-1",
               status: "completed",
               output: "",
@@ -341,7 +339,7 @@ describe("run entry body", () => {
               workdir: "/tmp/demo",
             },
             content: [{ type: "text", text: output }],
-            structured: { exit: 0, truncated: false },
+            metadata: { exit: 0, truncated: false },
           },
         }),
       ),
@@ -364,8 +362,7 @@ describe("run entry body", () => {
             input: {
               command: "ls",
             },
-            structured: {},
-            content: [],
+            metadata: {},
           },
         }),
       ),
@@ -435,8 +432,8 @@ describe("run entry body", () => {
             input: {
               patchText: "*** Begin Patch\n*** End Patch",
             },
-            content: [],
-            structured: {
+            content: [{ type: "text", text: "" }],
+            metadata: {
               files: [
                 {
                   status: "modified",
@@ -463,8 +460,8 @@ describe("run entry body", () => {
             input: {
               patchText: "*** Begin Patch\n*** End Patch",
             },
-            content: [],
-            structured: {
+            content: [{ type: "text", text: "" }],
+            metadata: {
               files: [
                 {
                   status: "modified",
@@ -499,8 +496,7 @@ describe("run entry body", () => {
               path: "/tmp/demo/run",
             },
             error: { type: "unknown", message: "No such file or directory: '/tmp/demo/run'" },
-            structured: {},
-            content: [],
+            metadata: {},
           },
         }),
       ),
@@ -520,11 +516,11 @@ describe("run entry body", () => {
         state: {
           status: "completed",
           input: { target: "demo" },
-          structured: {
+          metadata: {
             result: { ok: true, nested: { values: Array.from({ length: 40 }, (_, index) => ({ index })) } },
             large: "x".repeat(8_000),
           },
-          content: [],
+          content: [{ type: "text", text: "" }],
         },
       }),
     )

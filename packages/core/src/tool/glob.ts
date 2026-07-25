@@ -7,8 +7,9 @@ import path from "path"
 import { FileSystem } from "../filesystem"
 import { FSUtil } from "@opencode-ai/util/fs-util"
 import { Location } from "../location"
+import { LocationMutation } from "../location-mutation"
 import { Ripgrep } from "../ripgrep"
-import { NonNegativeInt, RelativePath } from "../schema"
+import { RelativePath } from "../schema"
 import { PermissionV2 } from "../permission"
 import { Tool } from "./tool"
 
@@ -25,14 +26,16 @@ export const Input = Schema.Struct({
 })
 
 export const Output = Schema.Array(FileSystem.Entry)
-const StructuredOutput = Schema.Struct({
-  count: NonNegativeInt,
-})
-type ModelOutput = typeof Output.Encoded
+type EncodedOutput = typeof Output.Encoded
 
 /** Format raw search results into the concise line-oriented output models expect. */
-export const toModelOutput = (output: ModelOutput) => {
-  const lines = output.length === 0 ? ["No files found"] : output.map((item) => item.path)
+export const toModelContent = (entries: EncodedOutput, truncated = false) => {
+  const lines = entries.length === 0 ? ["No files found"] : entries.map((item) => item.path)
+  if (truncated)
+    lines.push(
+      "",
+      `(Results are truncated: showing first ${entries.length} results. Consider using a more specific path or pattern.)`,
+    )
   return lines.join("\n")
 }
 
@@ -43,6 +46,7 @@ export const Plugin = {
     const fs = yield* FSUtil.Service
     const ripgrep = yield* Ripgrep.Service
     const location = yield* Location.Service
+    const mutation = yield* LocationMutation.Service
     const permission = yield* PermissionV2.Service
 
     yield* ctx.tool
@@ -54,18 +58,18 @@ export const Plugin = {
               "Find files by glob pattern within the active Location. Returns concise relative file resources. Use a relative path to narrow the search and limit to bound the result count.",
             input: Input,
             output: Output,
-            structured: StructuredOutput,
-            toStructuredOutput: ({ output }) => ({ count: output.length }),
-            toModelOutput: ({ output }) => [
-              {
-                type: "text",
-                text: toModelOutput(
-                  output.map((entry) => ({ ...entry, path: path.resolve(location.directory, entry.path) })),
-                ),
-              },
-            ],
             execute: (input, context) =>
               Effect.gen(function* () {
+                const source = { type: "tool" as const, messageID: context.messageID, callID: context.callID }
+                const target = yield* mutation.resolve({ path: input.path ?? ".", kind: "directory" })
+                const external = target.externalDirectory
+                if (external)
+                  yield* permission.assert({
+                    ...LocationMutation.externalDirectoryPermission(external),
+                    sessionID: context.sessionID,
+                    agent: context.agent,
+                    source,
+                  })
                 yield* permission.assert({
                   action: name,
                   resources: [input.pattern],
@@ -77,33 +81,43 @@ export const Plugin = {
                   },
                   sessionID: context.sessionID,
                   agent: context.agent,
-                  source: { type: "tool", messageID: context.messageID, callID: context.callID },
+                  source,
                 })
-                const cwd = path.resolve(location.directory, input.path ?? ".")
                 yield* fs
-                  .stat(cwd)
+                  .stat(target.canonical)
                   .pipe(
                     Effect.catchReason("PlatformError", "NotFound", () =>
                       Effect.fail(new ToolFailure({ message: `Search path does not exist: ${input.path ?? "."}` })),
                     ),
                   )
-                return yield* ripgrep
+                const root = path.resolve(location.directory, input.path ?? ".")
+                const limit = input.limit ?? FileSystem.DEFAULT_SEARCH_LIMIT
+                const entries = yield* ripgrep
                   .glob({
-                    cwd,
+                    cwd: target.canonical,
                     pattern: input.pattern,
-                    limit: input.limit ?? FileSystem.DEFAULT_SEARCH_LIMIT,
+                    limit: limit + 1,
                   })
                   .pipe(
                     Effect.map((result) =>
                       result.map((entry) =>
                         FileSystem.Entry.make({
                           ...entry,
-                          path: RelativePath.make(path.relative(location.directory, path.resolve(cwd, entry.path))),
+                          path: RelativePath.make(path.relative(location.directory, path.resolve(root, entry.path))),
                         }),
                       ),
                     ),
                   )
+                return { entries: entries.slice(0, limit), truncated: entries.length > limit }
               }).pipe(
+                Effect.map((result) => ({
+                  output: result.entries,
+                  content: toModelContent(
+                    result.entries.map((entry) => ({ ...entry, path: path.resolve(location.directory, entry.path) })),
+                    result.truncated,
+                  ),
+                  metadata: { count: result.entries.length, truncated: result.truncated },
+                })),
                 Effect.mapError((error) =>
                   error instanceof ToolFailure
                     ? error

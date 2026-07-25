@@ -59,8 +59,12 @@ const client = Layer.mock(LLMClient.Service)({
         LLMEvent.textStart({ id: "generate" }),
         LLMEvent.textDelta({ id: "generate", text: "Transient answer" }),
         LLMEvent.textEnd({ id: "generate" }),
-        LLMEvent.stepFinish({ index: 0, reason: "stop", usage: { inputTokens: 100, outputTokens: 10 } }),
-        LLMEvent.finish({ reason: "stop" }),
+        LLMEvent.stepFinish({
+          index: 0,
+          reason: { normalized: "stop" },
+          usage: { inputTokens: 100, outputTokens: 10 },
+        }),
+        LLMEvent.finish({ reason: { normalized: "stop" } }),
       ])
       if (!response) throw new Error("Incomplete generate response")
       return response
@@ -95,10 +99,17 @@ const references = Layer.mock(ReferenceInstructions.Service, { load: () => Effec
 const mcp = Layer.mock(McpInstructions.Service, { load: () => Effect.succeed(Instructions.empty) })
 const plugins = Layer.mock(PluginSupervisor.Service, { flush: Effect.void })
 const tools = Layer.mock(ToolRegistry.Service, {
-  materialize: () =>
+  snapshot: () =>
     Effect.succeed({
+      codeModeCatalog: [
+        {
+          path: "captured.lookup",
+          description: "Captured Code Mode catalog",
+          signature: "tools.captured.lookup(input: {}): Promise<string>",
+        },
+      ],
       definitions: [ToolDefinition.make({ name: "lookup", description: "Lookup", inputSchema: { type: "object" } })],
-      settle: () => Effect.die(new Error("unused")),
+      execute: () => Effect.die(new Error("unused")),
     }),
   register: () => Effect.die(new Error("unused")),
   registerBatch: () => Effect.die(new Error("unused")),
@@ -285,13 +296,14 @@ it.effect("generates from fresh settled Session context without durable mutation
     expect(requests[0]?.system.map((part) => part.text)).toContain("Initial context")
     expect(requests[0]?.http?.headers).toMatchObject({ "X-Session-Id": sessionID })
     expect(requests[0]?.providerOptions).toMatchObject({ openai: { promptCacheKey: sessionID } })
-    expect(
-      requests[0]?.messages.flatMap((message) =>
-        message.role === "system"
-          ? message.content.flatMap((content) => (content.type === "text" ? [content.text] : []))
-          : [],
-      ),
-    ).toEqual(["Changed context"])
+    const instructionUpdates = requests[0]?.messages.flatMap((message) =>
+      message.role === "system"
+        ? message.content.flatMap((content) => (content.type === "text" ? [content.text] : []))
+        : [],
+    )
+    expect(instructionUpdates).toHaveLength(1)
+    expect(instructionUpdates?.[0]).toContain("Changed context")
+    expect(instructionUpdates?.[0]).toContain("tools.captured.lookup(input: {}): Promise<string>")
     expect(userTexts(requests[0])).toEqual(["Existing durable context", "Summarize privately"])
     expect(
       requests[0]?.messages.flatMap((message) =>
@@ -301,7 +313,7 @@ it.effect("generates from fresh settled Session context without durable mutation
       ),
     ).toEqual(["Settled partial answer"])
     expect(requests[0]?.tools).toMatchObject([{ name: "lookup", description: "Hooked lookup" }])
-    expect(requests[0]?.toolChoice).toMatchObject({ type: "none" })
+    expect(requests[0]?.toolChoice).toBeUndefined()
     expect(yield* durableState(db, sessionID)).toEqual(before)
   }),
 )

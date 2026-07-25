@@ -422,7 +422,6 @@ function callOptions(request: LLMRequest): LanguageModelV3CallOptions {
     presencePenalty: request.generation?.presencePenalty,
     frequencyPenalty: request.generation?.frequencyPenalty,
     seed: request.generation?.seed,
-    responseFormat: responseFormat(request),
     tools: request.tools.map(tool),
     toolChoice: toolChoice(request.toolChoice),
     headers: request.http?.headers,
@@ -525,12 +524,6 @@ function toolChoice(input: LLMRequest["toolChoice"]): LanguageModelV3ToolChoice 
   if (!input) return undefined
   if (input.type === "tool") return input.name === undefined ? undefined : { type: "tool", toolName: input.name }
   return { type: input.type }
-}
-
-function responseFormat(request: LLMRequest): LanguageModelV3CallOptions["responseFormat"] {
-  if (request.responseFormat?.type === "json")
-    return { type: "json", schema: request.responseFormat.schema as JSONSchema7 }
-  if (request.responseFormat) return { type: "text" }
 }
 
 function providerOptions(input: LLMRequest["providerOptions"]): SharedV3ProviderOptions | undefined {
@@ -666,12 +659,12 @@ function streamPartEvents(
       return Effect.succeed([
         LLMEvent.stepFinish({
           index: state.step++,
-          reason: finishReason(event.finishReason),
+          reason: { normalized: finishReason(event.finishReason), raw: event.finishReason.raw },
           usage: usage(event.usage),
           providerMetadata: providerMetadata(event.providerMetadata),
         }),
         LLMEvent.finish({
-          reason: finishReason(event.finishReason),
+          reason: { normalized: finishReason(event.finishReason), raw: event.finishReason.raw },
           usage: usage(event.usage),
           providerMetadata: providerMetadata(event.providerMetadata),
         }),

@@ -43,6 +43,7 @@ import * as SessionRunnerLLM from "@opencode-ai/core/session/runner/llm"
 import { SessionRunnerModel } from "@opencode-ai/core/session/runner/model"
 import { SessionUsage } from "@opencode-ai/core/session/usage"
 import { ToolRegistry } from "@opencode-ai/core/tool/registry"
+import { CodeMode } from "@opencode-ai/core/codemode"
 import { PluginSupervisor } from "@opencode-ai/core/plugin/supervisor"
 import { PluginHooks } from "@opencode-ai/core/plugin/hooks"
 import { SystemPromptPlugin } from "@opencode-ai/core/plugin/system-prompt"
@@ -52,6 +53,7 @@ import { AgentV2 } from "@opencode-ai/core/agent"
 import { Config } from "@opencode-ai/core/config"
 import { ConfigCompaction } from "@opencode-ai/core/config/compaction"
 import { Tool } from "@opencode-ai/core/tool/tool"
+import { ToolHooks } from "@opencode-ai/core/tool/hooks"
 import {
   InstructionStateTable,
   SessionPendingTable,
@@ -118,8 +120,8 @@ const client = Layer.succeed(
 const reply = {
   stop: () => [
     LLMEvent.stepStart({ index: 0 }),
-    LLMEvent.stepFinish({ index: 0, reason: "stop" }),
-    LLMEvent.finish({ reason: "stop" }),
+    LLMEvent.stepFinish({ index: 0, reason: { normalized: "stop" } }),
+    LLMEvent.finish({ reason: { normalized: "stop" } }),
   ],
   text: (text: string, id: string) => fragmentFixture("text", id, [text]).completeEvents,
   textWithUsage: (text: string, id: string, inputTokens: number) =>
@@ -135,8 +137,8 @@ const reply = {
   tool: (id: string, name: string, input: unknown) => [
     LLMEvent.stepStart({ index: 0 }),
     LLMEvent.toolCall({ id, name, input }),
-    LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
-    LLMEvent.finish({ reason: "tool-calls" }),
+    LLMEvent.stepFinish({ index: 0, reason: { normalized: "tool-calls" } }),
+    LLMEvent.finish({ reason: { normalized: "tool-calls" } }),
   ],
 }
 const model = Model.make({ id: "fake-model", provider: "fake", route: OpenAIChat.route })
@@ -238,43 +240,45 @@ const permission = Layer.succeed(
 )
 const echo = Layer.effectDiscard(
   ToolRegistry.Service.use((registry) =>
-    registry.register({
-      echo: Tool.make({
-        description: "Echo text",
-        input: Schema.Struct({ text: Schema.String }),
-        output: Schema.Struct({ text: Schema.String }),
-        toModelOutput: ({ output }) => [{ type: "text", text: output.text }],
-        execute: ({ text }, context) =>
-          Effect.gen(function* () {
-            authorizations.push(context)
-            executions.push(text)
-            activeToolExecutions++
-            maxActiveToolExecutions = Math.max(maxActiveToolExecutions, activeToolExecutions)
-            if (activeToolExecutions === toolExecutionsReady && toolExecutionsStarted) {
-              yield* Deferred.succeed(toolExecutionsStarted, undefined)
-            }
-            if (toolExecutionGate) yield* Deferred.await(toolExecutionGate)
-            return { text }
-          }).pipe(Effect.ensuring(Effect.sync(() => activeToolExecutions--))),
-      }),
-      defect: Tool.make({
-        description: "Fail unexpectedly",
-        input: Schema.Struct({}),
-        output: Schema.Struct({}),
-        execute: () =>
-          (toolExecutionGate ? Deferred.await(toolExecutionGate) : Effect.void).pipe(
-            Effect.andThen(Effect.die("unexpected tool defect")),
-          ),
-      }),
-      // BigInt output with no model content forces ToolOutputStore.bound onto its
-      // JSON.stringify encode path, which fails with a typed StorageError.
-      storefail: Tool.make({
-        description: "Produce output that cannot be persisted",
-        input: Schema.Struct({}),
-        output: Schema.Any,
-        execute: () => Effect.succeed({ big: 1n }),
-      }),
-    }, { codemode: false }),
+    registry.register(
+      {
+        echo: Tool.make({
+          description: "Echo text",
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
+          execute: ({ text }, context) =>
+            Effect.gen(function* () {
+              authorizations.push(context)
+              executions.push(text)
+              activeToolExecutions++
+              maxActiveToolExecutions = Math.max(maxActiveToolExecutions, activeToolExecutions)
+              if (activeToolExecutions === toolExecutionsReady && toolExecutionsStarted) {
+                yield* Deferred.succeed(toolExecutionsStarted, undefined)
+              }
+              if (toolExecutionGate) yield* Deferred.await(toolExecutionGate)
+              return { output: { text }, content: text }
+            }).pipe(Effect.ensuring(Effect.sync(() => activeToolExecutions--))),
+        }),
+        defect: Tool.make({
+          description: "Fail unexpectedly",
+          input: Schema.Struct({}),
+          output: Schema.Struct({}),
+          execute: () =>
+            (toolExecutionGate ? Deferred.await(toolExecutionGate) : Effect.void).pipe(
+              Effect.andThen(Effect.die("unexpected tool defect")),
+            ),
+        }),
+        // The wrapped ToolOutputStore below fails bound for this call ID with a
+        // typed StorageError, exercising the infrastructure failure channel.
+        storefail: Tool.make({
+          description: "Produce output that cannot be persisted",
+          input: Schema.Struct({}),
+          output: Schema.Struct({}),
+          execute: () => Effect.succeed({ output: {} }),
+        }),
+      },
+      { codemode: false },
+    ),
   ),
 )
 const echoNode = makeLocationNode({ name: "test/session-runner-tools", layer: echo, deps: [ToolRegistry.node] })
@@ -365,6 +369,12 @@ const pluginSupervisor = Layer.succeed(
     flush: Effect.suspend(() => pluginFlushHook),
   }),
 )
+let codeModeMaterializations: ReadonlyArray<CodeMode.Materialization> = []
+let codeModeMaterializationCount = 0
+const codeMode = Layer.mock(CodeMode.Service, {
+  register: () => Effect.void,
+  materialize: () => Effect.sync(() => codeModeMaterializations[codeModeMaterializationCount++] ?? {}),
+})
 const promptCatalog = Layer.mock(Catalog.Service, {
   provider: {
     get: () => Effect.succeed(undefined),
@@ -379,6 +389,15 @@ const promptCatalog = Layer.mock(Catalog.Service, {
     small: () => Effect.succeed(undefined),
   },
 })
+// Pass-through bounding that fails "call-storefail" with a typed StorageError so
+// runner tests can exercise the infrastructure failure channel deterministically.
+const toolOutputStore = Layer.mock(ToolOutputStore.Service, {
+  limits: () => Effect.succeed({ maxLines: ToolOutputStore.MAX_LINES, maxBytes: ToolOutputStore.MAX_BYTES }),
+  bound: (input) =>
+    input.callID === "call-storefail"
+      ? Effect.fail(new ToolOutputStore.StorageError({ operation: "write", cause: new Error("disk full") }))
+      : Effect.succeed({ content: input.content, outputPaths: [] }),
+})
 const runnerLayer = AppNodeBuilder.build(SessionRunnerLLM.node, [
   [Snapshot.node, Snapshot.noopLayer],
   [LayerNodePlatform.llmClient, client],
@@ -391,8 +410,9 @@ const runnerLayer = AppNodeBuilder.build(SessionRunnerLLM.node, [
   [PermissionV2.node, permission],
   [Config.node, config],
   [McpInstructions.node, mcpInstructions],
-  [ToolOutputStore.node, ToolOutputStore.nodeWithoutConfig],
+  [ToolOutputStore.node, toolOutputStore],
   [PluginSupervisor.node, pluginSupervisor],
+  [CodeMode.node, codeMode],
 ])
 const execution = Layer.effect(
   SessionExecution.Service,
@@ -422,6 +442,7 @@ const it = testEffect(
       Catalog.node,
       ToolRegistry.node,
       ToolRegistry.toolsNode,
+      ToolHooks.node,
       PluginHooks.node,
       echoNode,
       SessionRunnerModel.node,
@@ -449,8 +470,9 @@ const it = testEffect(
       [Snapshot.node, Snapshot.noopLayer],
       [SessionExecution.node, execution],
       [Config.node, config],
-      [ToolOutputStore.node, ToolOutputStore.nodeWithoutConfig],
+      [ToolOutputStore.node, toolOutputStore],
       [PluginSupervisor.node, pluginSupervisor],
+      [CodeMode.node, codeMode],
     ],
   ),
 )
@@ -499,6 +521,8 @@ const setup = Effect.gen(function* () {
   systemLoadHook = Effect.void
   modelResolveHook = Effect.void
   pluginFlushHook = Effect.void
+  codeModeMaterializations = []
+  codeModeMaterializationCount = 0
   currentModel = model
   skillBaselines.clear()
   responses = undefined
@@ -586,8 +610,8 @@ const recordedStepSettlementEvents = (id: SessionV2.ID, assistantMessageID: Sess
     const settlementTypes = new Set([
       "session.step.started.1",
       "session.tool.called.1",
-      "session.tool.success.1",
-      "session.tool.failed.1",
+      "session.tool.success.2",
+      "session.tool.failed.2",
       "session.step.ended.1",
       "session.step.failed.1",
     ])
@@ -669,8 +693,8 @@ const fragmentFixture = (kind: FragmentKind, id: string, chunks: readonly string
         completeEvents: [
           ...partialEvents,
           LLMEvent.textEnd({ id }),
-          LLMEvent.stepFinish({ index: 0, reason: "stop" }),
-          LLMEvent.finish({ reason: "stop" }),
+          LLMEvent.stepFinish({ index: 0, reason: { normalized: "stop" } }),
+          LLMEvent.finish({ reason: { normalized: "stop" } }),
         ],
         expectedAssistant: { type: "assistant", finish: "stop", content: [expectedContent] },
         expectedContent,
@@ -689,8 +713,8 @@ const fragmentFixture = (kind: FragmentKind, id: string, chunks: readonly string
         completeEvents: [
           ...partialEvents,
           LLMEvent.reasoningEnd({ id }),
-          LLMEvent.stepFinish({ index: 0, reason: "stop" }),
-          LLMEvent.finish({ reason: "stop" }),
+          LLMEvent.stepFinish({ index: 0, reason: { normalized: "stop" } }),
+          LLMEvent.finish({ reason: { normalized: "stop" } }),
         ],
         expectedAssistant: { type: "assistant", finish: "stop", content: [expectedContent] },
         expectedContent,
@@ -810,6 +834,52 @@ const verifyPartialFlushOnInterruption = (kind: FragmentKind) =>
   })
 
 describe("SessionRunnerLLM", () => {
+  it.effect("uses one Code Mode materialization per request for instructions and execution", () =>
+    Effect.gen(function* () {
+      const executed: string[] = []
+      const execute = (name: string) =>
+        Tool.make({
+          description: `Execute ${name}`,
+          input: Schema.Struct({}),
+          output: Schema.String,
+          execute: () => Effect.sync(() => executed.push(name)).pipe(Effect.as({ output: name })),
+        })
+      const catalog = (name: string) => [
+        {
+          path: `catalog.${name.toLowerCase()}`,
+          description: `Code Mode catalog ${name}`,
+          signature: `tools.catalog.${name.toLowerCase()}(input: {}): Promise<string>`,
+        },
+      ]
+      const session = yield* setup
+      codeModeMaterializations = [
+        { catalog: catalog("A"), tool: execute("A") },
+        { catalog: catalog("B"), tool: execute("B") },
+        { catalog: catalog("C"), tool: execute("C") },
+        { catalog: catalog("D"), tool: execute("D") },
+      ]
+      yield* admit(session, "Use Code Mode")
+      responses = [reply.tool("call-execute", "execute", {}), reply.stop()]
+
+      yield* session.resume(sessionID)
+
+      expect(requests).toHaveLength(2)
+      expect(codeModeMaterializationCount).toBe(2)
+      expect(requests[0]?.system.some((part) => part.text.includes("Code Mode catalog A"))).toBe(true)
+      expect(requests[0]?.system.some((part) => part.text.includes("Code Mode catalog B"))).toBe(false)
+      expect(requests[0]?.tools.find((tool) => tool.name === "execute")?.description).toBe("Execute A")
+      expect(executed).toEqual(["A"])
+      expect(requests[1]?.tools.find((tool) => tool.name === "execute")?.description).toBe("Execute B")
+      expect(
+        requests[1]?.messages.some(
+          (message) =>
+            message.role === "system" &&
+            message.content.some((part) => part.type === "text" && part.text.includes("Code Mode catalog B")),
+        ),
+      ).toBe(true)
+    }),
+  )
+
   it.effect("applies session context hooks without exposing unavailable tools", () =>
     Effect.gen(function* () {
       const session = yield* setup
@@ -827,12 +897,26 @@ describe("SessionRunnerLLM", () => {
 
       yield* session.resume(sessionID)
 
-      expect(requests).toHaveLength(1)
+      // A hook-removed call fails independently and continues while step allowance remains.
+      expect(requests).toHaveLength(2)
       expect(requests[0]?.system.map((part) => part.text)).toEqual(["Hooked system"])
       expect(requests[0]?.messages).toEqual([Message.user("Hooked message")])
       expect(requests[0]?.tools.map((tool) => tool.name)).not.toContain("echo")
       expect(requests[0]?.tools.map((tool) => tool.name)).not.toContain("unregistered")
       expect(executions).toEqual([])
+      expect(yield* session.context(sessionID)).toMatchObject([
+        { type: "user", text: "Original message" },
+        {
+          type: "assistant",
+          content: [
+            {
+              type: "tool",
+              id: "call-removed",
+              state: { status: "error", error: { type: "tool.unknown" } },
+            },
+          ],
+        },
+      ])
     }),
   )
 
@@ -841,19 +925,22 @@ describe("SessionRunnerLLM", () => {
       const session = yield* setup
       const registry = yield* ToolRegistry.Service
       const contexts: Tool.Context[] = []
-      yield* registry.register({
-        location_context: Tool.make({
-          description: "Read application context",
-          input: Schema.Struct({ query: Schema.String }),
-          output: Schema.Struct({ answer: Schema.String }),
-          execute: ({ query }, context) =>
-            Effect.gen(function* () {
-              contexts.push(context)
-              yield* context.progress({ structured: { phase: "reading" } })
-              return { answer: query.toUpperCase() }
-            }),
-        }),
-      }, { codemode: false })
+      yield* registry.register(
+        {
+          location_context: Tool.make({
+            description: "Read application context",
+            input: Schema.Struct({ query: Schema.String }),
+            output: Schema.Struct({ answer: Schema.String }),
+            execute: ({ query }, context) =>
+              Effect.gen(function* () {
+                contexts.push(context)
+                yield* context.progress({ phase: "reading" })
+                return { output: { answer: query.toUpperCase() } }
+              }),
+          }),
+        },
+        { codemode: false },
+      )
       yield* admit(session, "Use application context")
       responses = [reply.tool("call-location", "location_context", { query: "hello" }), []]
       const events = yield* EventV2.Service
@@ -876,7 +963,7 @@ describe("SessionRunnerLLM", () => {
           progress: expect.any(Function),
         },
       ])
-      expect(Array.from(yield* Fiber.join(progressFiber))[0]?.data.structured).toEqual({ phase: "reading" })
+      expect(Array.from(yield* Fiber.join(progressFiber))[0]?.data.metadata).toEqual({ phase: "reading" })
       expect(yield* session.context(sessionID)).toMatchObject([
         { type: "user", text: "Use application context" },
         {
@@ -885,7 +972,7 @@ describe("SessionRunnerLLM", () => {
             {
               type: "tool",
               id: "call-location",
-              state: { status: "completed", structured: { answer: "HELLO" } },
+              state: { status: "completed", content: [{ type: "text", text: '{"answer":"HELLO"}' }] },
             },
           ],
         },
@@ -893,25 +980,29 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
-  it.effect("persists the latest partial snapshot when a tool fails", () =>
+  it.effect("prefers failure outcome metadata over retained progress", () =>
     Effect.gen(function* () {
       const session = yield* setup
       const registry = yield* ToolRegistry.Service
-      yield* registry.register({
-        failing_progress: Tool.make({
-          description: "Report progress and fail",
-          input: Schema.Struct({}),
-          output: Schema.Struct({}),
-          execute: (_, context) =>
-            Effect.gen(function* () {
-              yield* context.progress({
-                structured: { phase: "running" },
-                content: [{ type: "text", text: "before failure" }],
-              })
-              return yield* new ToolFailure({ message: "failed after progress" })
-            }),
-        }),
-      }, { codemode: false })
+      const hooks = yield* ToolHooks.Service
+      yield* hooks.hook.after((event) => {
+        if (event.status === "error") event.metadata = { phase: "failed" }
+      })
+      yield* registry.register(
+        {
+          failing_progress: Tool.make({
+            description: "Report progress and fail",
+            input: Schema.Struct({}),
+            output: Schema.Struct({}),
+            execute: (_, context) =>
+              Effect.gen(function* () {
+                yield* context.progress({ phase: "running" })
+                return yield* new ToolFailure({ message: "failed after progress" })
+              }),
+          }),
+        },
+        { codemode: false },
+      )
       yield* admit(session, "Run failing progress")
       responses = [reply.tool("call-failing-progress", "failing_progress", {}), reply.stop()]
 
@@ -927,8 +1018,7 @@ describe("SessionRunnerLLM", () => {
               id: "call-failing-progress",
               state: {
                 status: "error",
-                structured: { phase: "running" },
-                content: [{ type: "text", text: "before failure" }],
+                metadata: { phase: "failed" },
                 error: { message: "failed after progress" },
               },
             },
@@ -946,22 +1036,26 @@ describe("SessionRunnerLLM", () => {
       const scope = yield* Scope.make()
       const executions: string[] = []
       yield* registry
-        .register({
-          reloaded: Tool.make({
-            description: "Record the advertised tool",
-            input: Schema.Struct({}),
-            output: Schema.Struct({ value: Schema.String }),
-            execute: () => Effect.sync(() => executions.push("advertised")).pipe(Effect.as({ value: "advertised" })),
-          }),
-        }, { codemode: false })
+        .register(
+          {
+            reloaded: Tool.make({
+              description: "Record the advertised tool",
+              input: Schema.Struct({}),
+              output: Schema.Struct({ value: Schema.String }),
+              execute: () =>
+                Effect.sync(() => executions.push("advertised")).pipe(Effect.as({ output: { value: "advertised" } })),
+            }),
+          },
+          { codemode: false },
+        )
         .pipe(Scope.provide(scope))
       yield* admit(session, "Use the reloaded tool")
       responses = [
         [
           LLMEvent.stepStart({ index: 0 }),
           LLMEvent.toolCall({ id: "call-reloaded", name: "reloaded", input: {} }),
-          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
-          LLMEvent.finish({ reason: "tool-calls" }),
+          LLMEvent.stepFinish({ index: 0, reason: { normalized: "tool-calls" } }),
+          LLMEvent.finish({ reason: { normalized: "tool-calls" } }),
         ],
         [],
       ]
@@ -971,14 +1065,18 @@ describe("SessionRunnerLLM", () => {
       const run = yield* session.resume(sessionID).pipe(Effect.forkChild)
       yield* Deferred.await(streamStarted)
       yield* Scope.close(scope, Exit.void)
-      yield* registry.register({
-        reloaded: Tool.make({
-          description: "Record the replacement tool",
-          input: Schema.Struct({}),
-          output: Schema.Struct({ value: Schema.String }),
-          execute: () => Effect.sync(() => executions.push("replacement")).pipe(Effect.as({ value: "replacement" })),
-        }),
-      }, { codemode: false })
+      yield* registry.register(
+        {
+          reloaded: Tool.make({
+            description: "Record the replacement tool",
+            input: Schema.Struct({}),
+            output: Schema.Struct({ value: Schema.String }),
+            execute: () =>
+              Effect.sync(() => executions.push("replacement")).pipe(Effect.as({ output: { value: "replacement" } })),
+          }),
+        },
+        { codemode: false },
+      )
       yield* Deferred.succeed(streamGate, undefined)
       yield* Fiber.join(run)
 
@@ -991,7 +1089,7 @@ describe("SessionRunnerLLM", () => {
             {
               type: "tool",
               id: "call-reloaded",
-              state: { status: "completed", structured: { value: "advertised" } },
+              state: { status: "completed", content: [{ type: "text", text: '{"value":"advertised"}' }] },
             },
           ],
         },
@@ -1054,7 +1152,7 @@ describe("SessionRunnerLLM", () => {
 
       expect(requests).toHaveLength(1)
       expect(requests[0]?.model).toBe(model)
-      expect(requests[0]?.tools.map((tool) => tool.name)).toEqual(["echo", "defect", "storefail"])
+      expect(requests[0]?.tools.map((tool) => tool.name)).toEqual(["defect", "echo", "storefail"])
       expect(requests[0]?.messages.map((message) => ({ role: message.role, content: message.content }))).toEqual([
         { role: "user", content: [{ type: "text", text: "First" }] },
         { role: "user", content: [{ type: "text", text: "Second" }] },
@@ -2332,7 +2430,7 @@ describe("SessionRunnerLLM", () => {
         }),
         LLMEvent.stepFinish({
           index: 0,
-          reason: "tool-calls",
+          reason: { normalized: "tool-calls" },
           usage: {
             inputTokens: 10,
             nonCachedInputTokens: 8,
@@ -2341,13 +2439,13 @@ describe("SessionRunnerLLM", () => {
             cacheReadInputTokens: 2,
           },
         }),
-        LLMEvent.finish({ reason: "tool-calls" }),
+        LLMEvent.finish({ reason: { normalized: "tool-calls" } }),
       ]
 
       yield* session.resume(sessionID)
 
       expect(requests).toHaveLength(1)
-      expect(requests[0]?.tools.map((tool) => tool.name)).toEqual(["echo", "defect", "storefail"])
+      expect(requests[0]?.tools.map((tool) => tool.name)).toEqual(["defect", "echo", "storefail"])
       expect(yield* session.context(sessionID)).toMatchObject([
         { type: "user", text: "Use tools" },
         {
@@ -2377,7 +2475,6 @@ describe("SessionRunnerLLM", () => {
               state: {
                 status: "completed",
                 input: { query: "hello" },
-                structured: {},
                 content: [
                   { type: "text", text: "Hello" },
                   { type: "file", mime: "image/png", uri: "data:image/png;base64,aGVsbG8=", name: "hello.png" },
@@ -2417,7 +2514,6 @@ describe("SessionRunnerLLM", () => {
               state: {
                 status: "completed",
                 input: { text: "hello" },
-                structured: { text: "hello" },
                 content: [{ type: "text", text: "hello" }],
               },
             },
@@ -2429,7 +2525,7 @@ describe("SessionRunnerLLM", () => {
       expect((yield* recordedStepSettlementEvents(sessionID, assistant.id)).map((event) => event.type)).toEqual([
         "session.step.started.1",
         "session.tool.called.1",
-        "session.tool.success.1",
+        "session.tool.success.2",
         "session.step.ended.1",
       ])
     }),
@@ -2492,8 +2588,8 @@ describe("SessionRunnerLLM", () => {
             anthropic: { ignored: true },
           },
         }),
-        LLMEvent.stepFinish({ index: 0, reason: "stop" }),
-        LLMEvent.finish({ reason: "stop" }),
+        LLMEvent.stepFinish({ index: 0, reason: { normalized: "stop" } }),
+        LLMEvent.finish({ reason: { normalized: "stop" } }),
       ]
       yield* session.resume(sessionID)
       yield* replaySessionProjection(sessionID)
@@ -2557,8 +2653,8 @@ describe("SessionRunnerLLM", () => {
           providerExecuted: true,
           providerMetadata: { openai: { blockType: "web_search_tool_result" }, anthropic: { ignored: true } },
         }),
-        LLMEvent.stepFinish({ index: 0, reason: "stop" }),
-        LLMEvent.finish({ reason: "stop" }),
+        LLMEvent.stepFinish({ index: 0, reason: { normalized: "stop" } }),
+        LLMEvent.finish({ reason: { normalized: "stop" } }),
       ]
       yield* session.resume(sessionID)
       yield* replaySessionProjection(sessionID)
@@ -2581,7 +2677,8 @@ describe("SessionRunnerLLM", () => {
           type: "tool-result",
           id: "hosted-search",
           name: "web_search",
-          result: { type: "json", value: [{ title: "Effect" }] },
+          // The generic replay result derives from canonical stored content.
+          result: { type: "text", value: '[{"title":"Effect"}]' },
           providerExecuted: true,
           providerMetadata: { openai: { blockType: "web_search_tool_result" } },
         },
@@ -2604,8 +2701,8 @@ describe("SessionRunnerLLM", () => {
         ),
       ])
       const final = Stream.fromIterable([
-        LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
-        LLMEvent.finish({ reason: "tool-calls" }),
+        LLMEvent.stepFinish({ index: 0, reason: { normalized: "tool-calls" } }),
+        LLMEvent.finish({ reason: { normalized: "tool-calls" } }),
       ])
       responseStream = Stream.concat(
         initial,
@@ -2667,7 +2764,7 @@ describe("SessionRunnerLLM", () => {
             {
               type: "tool",
               id: "tool_0",
-              state: { status: "completed", structured: { text: "first" }, content: [{ type: "text", text: "first" }] },
+              state: { status: "completed", content: [{ type: "text", text: "first" }] },
             },
           ],
         },
@@ -2677,11 +2774,7 @@ describe("SessionRunnerLLM", () => {
             {
               type: "tool",
               id: "tool_0",
-              state: {
-                status: "completed",
-                structured: { text: "second" },
-                content: [{ type: "text", text: "second" }],
-              },
+              state: { status: "completed", content: [{ type: "text", text: "second" }] },
             },
           ],
         },
@@ -2697,7 +2790,7 @@ describe("SessionRunnerLLM", () => {
             {
               type: "tool",
               id: "tool_0",
-              state: { status: "completed", structured: { text: "first" }, content: [{ type: "text", text: "first" }] },
+              state: { status: "completed", content: [{ type: "text", text: "first" }] },
             },
           ],
         },
@@ -2707,11 +2800,7 @@ describe("SessionRunnerLLM", () => {
             {
               type: "tool",
               id: "tool_0",
-              state: {
-                status: "completed",
-                structured: { text: "second" },
-                content: [{ type: "text", text: "second" }],
-              },
+              state: { status: "completed", content: [{ type: "text", text: "second" }] },
             },
           ],
         },
@@ -3013,7 +3102,7 @@ describe("SessionRunnerLLM", () => {
       streamFailure = undefined
       streamGate = undefined
       streamStarted = undefined
-      yield* Effect.yieldNow
+      yield* session.wait(sessionID)
 
       expect(requests).toHaveLength(2)
       expect(userTexts(requests[1]!)).toEqual(["Start working", "Recover with this"])
@@ -3025,7 +3114,7 @@ describe("SessionRunnerLLM", () => {
       const session = yield* setup
       const events = yield* EventV2.Service
       yield* admit(session, "Recover interrupted tool")
-      yield* SessionPending.promoteSteers((yield* Database.Service).db, events, sessionID)
+      yield* SessionPending.promote((yield* Database.Service).db, events, sessionID, "steer")
       const assistantMessageID = SessionMessage.ID.create()
       yield* events.publish(SessionEvent.Step.Started, {
         sessionID,
@@ -3082,7 +3171,7 @@ describe("SessionRunnerLLM", () => {
       const session = yield* setup
       const events = yield* EventV2.Service
       yield* admit(session, "Recover interrupted hosted tool")
-      yield* SessionPending.promoteSteers((yield* Database.Service).db, events, sessionID)
+      yield* SessionPending.promote((yield* Database.Service).db, events, sessionID, "steer")
       const assistantMessageID = SessionMessage.ID.create()
       yield* events.publish(SessionEvent.Step.Started, {
         sessionID,
@@ -3133,7 +3222,7 @@ describe("SessionRunnerLLM", () => {
       const session = yield* setup
       const events = yield* EventV2.Service
       yield* admit(session, "Recover interrupted tool input")
-      yield* SessionPending.promoteSteers((yield* Database.Service).db, events, sessionID)
+      yield* SessionPending.promote((yield* Database.Service).db, events, sessionID, "steer")
       const assistantMessageID = SessionMessage.ID.create()
       yield* events.publish(SessionEvent.Step.Started, {
         sessionID,
@@ -3404,7 +3493,7 @@ describe("SessionRunnerLLM", () => {
       expect((yield* recordedStepSettlementEvents(sessionID, assistant.id)).map((event) => event.type)).toEqual([
         "session.step.started.1",
         "session.tool.called.1",
-        "session.tool.failed.1",
+        "session.tool.failed.2",
         "session.step.ended.1",
       ])
     }),
@@ -3414,17 +3503,20 @@ describe("SessionRunnerLLM", () => {
     Effect.gen(function* () {
       const session = yield* setup
       const registry = yield* ToolRegistry.Service
-      yield* registry.register({
-        blocked: Tool.make({
-          description: "Fail because policy blocked execution",
-          input: Schema.Struct({}),
-          output: Schema.Struct({}),
-          execute: () =>
-            Effect.fail(new PermissionV2.BlockedError({ rules: [], permission: "blocked", resources: ["*"] })).pipe(
-              Effect.mapError(() => new Tool.Failure({ message: "Permission blocked" })),
-            ),
-        }),
-      }, { codemode: false })
+      yield* registry.register(
+        {
+          blocked: Tool.make({
+            description: "Fail because policy blocked execution",
+            input: Schema.Struct({}),
+            output: Schema.Struct({}),
+            execute: () =>
+              Effect.fail(new PermissionV2.BlockedError({ rules: [], permission: "blocked", resources: ["*"] })).pipe(
+                Effect.mapError(() => new Tool.Failure({ message: "Permission blocked" })),
+              ),
+          }),
+        },
+        { codemode: false },
+      )
       yield* admit(session, "Call blocked")
 
       responses = [reply.tool("call-blocked", "blocked", {}), reply.stop()]
@@ -3449,14 +3541,17 @@ describe("SessionRunnerLLM", () => {
     Effect.gen(function* () {
       const session = yield* setup
       const registry = yield* ToolRegistry.Service
-      yield* registry.register({
-        declined: Tool.make({
-          description: "Fail because the user declined approval",
-          input: Schema.Struct({}),
-          output: Schema.Struct({}),
-          execute: () => Effect.die(new PermissionV2.DeclinedError()),
-        }),
-      }, { codemode: false })
+      yield* registry.register(
+        {
+          declined: Tool.make({
+            description: "Fail because the user declined approval",
+            input: Schema.Struct({}),
+            output: Schema.Struct({}),
+            execute: () => Effect.die(new PermissionV2.DeclinedError()),
+          }),
+        },
+        { codemode: false },
+      )
       yield* admit(session, "Call declined")
 
       response = reply.tool("call-declined", "declined", {})
@@ -3474,7 +3569,7 @@ describe("SessionRunnerLLM", () => {
             {
               type: "tool",
               id: "call-declined",
-              state: { status: "error", error: { message: "Tool execution interrupted" } },
+              state: { status: "error", error: { type: "aborted", message: "The user declined this tool call" } },
             },
           ],
         },
@@ -3486,17 +3581,20 @@ describe("SessionRunnerLLM", () => {
     Effect.gen(function* () {
       const session = yield* setup
       const registry = yield* ToolRegistry.Service
-      yield* registry.register({
-        corrected: Tool.make({
-          description: "Fail with user correction feedback",
-          input: Schema.Struct({}),
-          output: Schema.Struct({}),
-          execute: () =>
-            Effect.fail(new PermissionV2.CorrectedError({ feedback: "Use another tool" })).pipe(
-              Effect.mapError(() => new Tool.Failure({ message: "Use another tool" })),
-            ),
-        }),
-      }, { codemode: false })
+      yield* registry.register(
+        {
+          corrected: Tool.make({
+            description: "Fail with user correction feedback",
+            input: Schema.Struct({}),
+            output: Schema.Struct({}),
+            execute: () =>
+              Effect.fail(new PermissionV2.CorrectedError({ feedback: "Use another tool" })).pipe(
+                Effect.mapError(() => new Tool.Failure({ message: "Use another tool" })),
+              ),
+          }),
+        },
+        { codemode: false },
+      )
       yield* admit(session, "Call corrected")
 
       responses = [reply.tool("call-corrected", "corrected", {}), reply.stop()]
@@ -3540,13 +3638,13 @@ describe("SessionRunnerLLM", () => {
                 status: "error",
                 error: {
                   type: "unknown",
-                  message: expect.stringContaining("Failed to encode tool output"),
+                  message: expect.stringContaining("Failed to write tool output"),
                 },
               },
             },
           ],
           finish: "error",
-          error: { type: "unknown", message: expect.stringContaining("Failed to encode tool output") },
+          error: { type: "unknown", message: expect.stringContaining("Failed to write tool output") },
         },
       ])
     }),
@@ -3560,7 +3658,7 @@ describe("SessionRunnerLLM", () => {
       yield* admit(session, "Reject permission")
       responses = [
         reply.tool("call-permission", "permissionfail", {}),
-        [LLMEvent.stepStart({ index: 0 }), LLMEvent.stepFinish({ index: 0, reason: "stop" })],
+        [LLMEvent.stepStart({ index: 0 }), LLMEvent.stepFinish({ index: 0, reason: { normalized: "stop" } })],
       ]
 
       yield* session.resume(sessionID)
@@ -3594,14 +3692,17 @@ describe("SessionRunnerLLM", () => {
     Effect.gen(function* () {
       const session = yield* setup
       const registry = yield* ToolRegistry.Service
-      yield* registry.register({
-        question: Tool.make({
-          description: "Ask the user",
-          input: Schema.Struct({}),
-          output: Schema.Struct({}),
-          execute: () => Effect.die(new QuestionTool.CancelledError()),
-        }),
-      }, { codemode: false })
+      yield* registry.register(
+        {
+          question: Tool.make({
+            description: "Ask the user",
+            input: Schema.Struct({}),
+            output: Schema.Struct({}),
+            execute: () => Effect.die(new QuestionTool.CancelledError()),
+          }),
+        },
+        { codemode: false },
+      )
       yield* admit(session, "Ask then stop")
 
       responses = [reply.tool("call-question", "question", {}), []]
@@ -3620,7 +3721,7 @@ describe("SessionRunnerLLM", () => {
             {
               type: "tool",
               id: "call-question",
-              state: { status: "error", error: { type: "aborted", message: "Tool execution interrupted" } },
+              state: { status: "error", error: { type: "aborted", message: "The user dismissed this question" } },
             },
           ],
         },
@@ -3655,7 +3756,11 @@ describe("SessionRunnerLLM", () => {
         {
           type: "assistant",
           content: [
-            { type: "tool", id: "call-before-failure", state: { status: "completed", structured: { text: "settle" } } },
+            {
+              type: "tool",
+              id: "call-before-failure",
+              state: { status: "completed", content: [{ type: "text", text: "settle" }] },
+            },
           ],
         },
       ])
@@ -3663,7 +3768,7 @@ describe("SessionRunnerLLM", () => {
       expect((yield* recordedStepSettlementEvents(sessionID, assistant.id)).map((event) => event.type)).toEqual([
         "session.step.started.1",
         "session.tool.called.1",
-        "session.tool.success.1",
+        "session.tool.success.2",
         "session.step.failed.1",
       ])
     }),
@@ -3707,7 +3812,7 @@ describe("SessionRunnerLLM", () => {
       expect((yield* recordedStepSettlementEvents(sessionID, assistant.id)).map((event) => event.type)).toEqual([
         "session.step.started.1",
         "session.tool.called.1",
-        "session.tool.failed.1",
+        "session.tool.failed.2",
         "session.step.failed.1",
       ])
 
@@ -3808,7 +3913,8 @@ describe("SessionRunnerLLM", () => {
       expect(requests).toHaveLength(2)
       expect(requests[0]?.toolChoice).toBeUndefined()
       expect(requests[1]?.toolChoice).toMatchObject({ type: "none" })
-      expect(requests[1]?.tools).toEqual([])
+      // Protocols with native "none" keep these definitions for prompt caching.
+      expect(requests[1]?.tools.map((tool) => tool.name)).toContain("echo")
       expect(requests[1]?.messages.at(-1)).toMatchObject({
         role: "assistant",
         content: [{ type: "text", text: expect.stringContaining("MAXIMUM STEPS REACHED") }],
@@ -3901,10 +4007,10 @@ describe("SessionRunnerLLM", () => {
         LLMEvent.textDelta({ id: "partial", text: "Partial" }),
         LLMEvent.stepFinish({
           index: 0,
-          reason: "content-filter",
+          reason: { normalized: "content-filter" },
           usage: { nonCachedInputTokens: 8, outputTokens: 3, reasoningTokens: 1 },
         }),
-        LLMEvent.finish({ reason: "content-filter" }),
+        LLMEvent.finish({ reason: { normalized: "content-filter" } }),
       ]
 
       expect((yield* session.resume(sessionID).pipe(Effect.flip)).message).toBe("Provider blocked the response")
@@ -3937,8 +4043,8 @@ describe("SessionRunnerLLM", () => {
       response = [
         LLMEvent.stepStart({ index: 0 }),
         LLMEvent.toolCall({ id: "call-before-content-filter", name: "echo", input: { text: "settled" } }),
-        LLMEvent.stepFinish({ index: 0, reason: "content-filter" }),
-        LLMEvent.finish({ reason: "content-filter" }),
+        LLMEvent.stepFinish({ index: 0, reason: { normalized: "content-filter" } }),
+        LLMEvent.finish({ reason: { normalized: "content-filter" } }),
       ]
 
       const run = yield* session.resume(sessionID).pipe(Effect.forkChild)
@@ -3953,7 +4059,7 @@ describe("SessionRunnerLLM", () => {
       expect(events.map((event) => event.type)).toEqual([
         "session.step.started.1",
         "session.tool.called.1",
-        "session.tool.success.1",
+        "session.tool.success.2",
         "session.step.failed.1",
       ])
       expect(
@@ -4117,7 +4223,7 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
-  it.effect("retries a physical attempt without consuming the logical agent step", () =>
+  it.effect("retries a model call without consuming the logical agent step", () =>
     Effect.gen(function* () {
       const session = yield* setup
       const agents = yield* AgentV2.Service
@@ -4146,7 +4252,8 @@ describe("SessionRunnerLLM", () => {
         content: [{ type: "text", text: expect.stringContaining("MAXIMUM STEPS REACHED") }],
       })
       expect(requests[2]?.toolChoice).toMatchObject({ type: "none" })
-      expect(requests[2]?.tools).toEqual([])
+      // The final step keeps tool definitions to preserve provider prompt caching.
+      expect(requests[2]?.tools.map((tool) => tool.name)).toContain("echo")
       expect(requests[2]?.messages.at(-1)).toMatchObject({
         role: "assistant",
         content: [{ type: "text", text: expect.stringContaining("MAXIMUM STEPS REACHED") }],
@@ -4197,7 +4304,7 @@ describe("SessionRunnerLLM", () => {
       expect(yield* recordedStepSettlementEvents(sessionID, assistant.id)).toMatchObject([
         { type: "session.step.started.1" },
         {
-          type: "session.tool.failed.1",
+          type: "session.tool.failed.2",
           data: {
             callID: "call-malformed",
             error: { type: "provider.invalid-output", message: "Invalid JSON input for tool call echo" },
@@ -4228,8 +4335,8 @@ describe("SessionRunnerLLM", () => {
             name: "echo",
             raw,
           }),
-          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
-          LLMEvent.finish({ reason: "tool-calls" }),
+          LLMEvent.stepFinish({ index: 0, reason: { normalized: "tool-calls" } }),
+          LLMEvent.finish({ reason: { normalized: "tool-calls" } }),
         ],
         reply.stop(),
       ]
@@ -4292,7 +4399,7 @@ describe("SessionRunnerLLM", () => {
       expect(failed.error).toBeUndefined()
       expect((yield* recordedStepSettlementEvents(sessionID, failed.id)).map((event) => event.type)).toEqual([
         "session.step.started.1",
-        "session.tool.failed.1",
+        "session.tool.failed.2",
         "session.step.ended.1",
       ])
       const database = (yield* Database.Service).db
@@ -4325,8 +4432,8 @@ describe("SessionRunnerLLM", () => {
             name: "echo",
             raw: '{"text":"partial',
           }),
-          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
-          LLMEvent.finish({ reason: "tool-calls" }),
+          LLMEvent.stepFinish({ index: 0, reason: { normalized: "tool-calls" } }),
+          LLMEvent.finish({ reason: { normalized: "tool-calls" } }),
         ],
         reply.stop(),
       ]
@@ -4367,8 +4474,8 @@ describe("SessionRunnerLLM", () => {
           name: "echo",
           raw: '{"text":"partial',
         }),
-        LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
-        LLMEvent.finish({ reason: "tool-calls" }),
+        LLMEvent.stepFinish({ index: 0, reason: { normalized: "tool-calls" } }),
+        LLMEvent.finish({ reason: { normalized: "tool-calls" } }),
       ]
 
       const run = yield* session.resume(sessionID).pipe(Effect.forkChild)
@@ -4476,8 +4583,8 @@ describe("SessionRunnerLLM", () => {
           name: "echo",
           raw: '{"text":"partial',
         }),
-        LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
-        LLMEvent.finish({ reason: "tool-calls" }),
+        LLMEvent.stepFinish({ index: 0, reason: { normalized: "tool-calls" } }),
+        LLMEvent.finish({ reason: { normalized: "tool-calls" } }),
       ]
       responses = [
         malformed("call-first"),
@@ -4511,8 +4618,8 @@ describe("SessionRunnerLLM", () => {
           name: "echo",
           raw: '{"text":"partial',
         }),
-        LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
-        LLMEvent.finish({ reason: "tool-calls" }),
+        LLMEvent.stepFinish({ index: 0, reason: { normalized: "tool-calls" } }),
+        LLMEvent.finish({ reason: { normalized: "tool-calls" } }),
       ]
       responses = [malformed("call-first"), malformed("call-at-limit")]
 
@@ -4521,7 +4628,7 @@ describe("SessionRunnerLLM", () => {
       expect(requests).toHaveLength(2)
       expect(requests[0]?.toolChoice).toBeUndefined()
       expect(requests[1]?.toolChoice).toMatchObject({ type: "none" })
-      expect((yield* recordedEventTypes(sessionID)).filter((type) => type === "session.tool.failed.1")).toHaveLength(2)
+      expect((yield* recordedEventTypes(sessionID)).filter((type) => type === "session.tool.failed.2")).toHaveLength(2)
     }),
   )
 
@@ -4553,7 +4660,7 @@ describe("SessionRunnerLLM", () => {
       expect((yield* recordedStepSettlementEvents(sessionID, assistant.id)).map((event) => event.type)).toEqual([
         "session.step.started.1",
         "session.tool.called.1",
-        "session.tool.success.1",
+        "session.tool.success.2",
         "session.step.failed.1",
       ])
     }),
@@ -4585,7 +4692,7 @@ describe("SessionRunnerLLM", () => {
       expect((yield* recordedStepSettlementEvents(sessionID, assistant.id)).map((event) => event.type)).toEqual([
         "session.step.started.1",
         "session.tool.called.1",
-        "session.tool.failed.1",
+        "session.tool.failed.2",
         "session.step.failed.1",
       ])
     }),
@@ -4609,7 +4716,7 @@ describe("SessionRunnerLLM", () => {
       expect(events.map((event) => event.type)).toEqual([
         "session.step.started.1",
         "session.tool.called.1",
-        "session.tool.failed.1",
+        "session.tool.failed.2",
         "session.step.failed.1",
       ])
       expect(events[2]?.data.error).toMatchObject({ type: "unknown", message: "unexpected tool defect" })
@@ -4646,7 +4753,7 @@ describe("SessionRunnerLLM", () => {
       expect(events.map((event) => event.type)).toEqual([
         "session.step.started.1",
         "session.tool.called.1",
-        "session.tool.failed.1",
+        "session.tool.failed.2",
         "session.step.failed.1",
       ])
       expect(
@@ -4673,8 +4780,8 @@ describe("SessionRunnerLLM", () => {
       response = [
         LLMEvent.stepStart({ index: 0 }),
         hostedCall("call-hosted-clean-end", "effect"),
-        LLMEvent.stepFinish({ index: 0, reason: "stop" }),
-        LLMEvent.finish({ reason: "stop" }),
+        LLMEvent.stepFinish({ index: 0, reason: { normalized: "stop" } }),
+        LLMEvent.finish({ reason: { normalized: "stop" } }),
       ]
 
       yield* session.resume(sessionID)
@@ -4684,7 +4791,7 @@ describe("SessionRunnerLLM", () => {
       expect(events.map((event) => event.type)).toEqual([
         "session.step.started.1",
         "session.tool.called.1",
-        "session.tool.failed.1",
+        "session.tool.failed.2",
         "session.step.ended.1",
       ])
       expect(
@@ -4721,8 +4828,8 @@ describe("SessionRunnerLLM", () => {
         { type: "session.step.started.1", callID: undefined },
         { type: "session.tool.called.1", callID: "call-local-raw-failure" },
         { type: "session.tool.called.1", callID: "call-hosted-raw-failure-pair" },
-        { type: "session.tool.failed.1", callID: "call-local-raw-failure" },
-        { type: "session.tool.failed.1", callID: "call-hosted-raw-failure-pair" },
+        { type: "session.tool.failed.2", callID: "call-local-raw-failure" },
+        { type: "session.tool.failed.2", callID: "call-hosted-raw-failure-pair" },
         { type: "session.step.failed.1", callID: undefined },
       ])
       expect(
@@ -4748,7 +4855,7 @@ describe("SessionRunnerLLM", () => {
       expect(events.map((event) => event.type)).toEqual([
         "session.step.started.1",
         "session.tool.called.1",
-        "session.tool.failed.1",
+        "session.tool.failed.2",
         "session.step.failed.1",
       ])
       expect(
@@ -4798,8 +4905,8 @@ describe("SessionRunnerLLM", () => {
         LLMEvent.textStart({ id: "text-2" }),
         LLMEvent.textDelta({ id: "text-2", text: "Second" }),
         LLMEvent.textEnd({ id: "text-2" }),
-        LLMEvent.stepFinish({ index: 0, reason: "stop" }),
-        LLMEvent.finish({ reason: "stop" }),
+        LLMEvent.stepFinish({ index: 0, reason: { normalized: "stop" } }),
+        LLMEvent.finish({ reason: { normalized: "stop" } }),
       ]
 
       yield* session.resume(sessionID)
@@ -4852,8 +4959,8 @@ describe("SessionRunnerLLM", () => {
         LLMEvent.toolInputDelta({ id: "call-parsed", name: "web_search", text: '{"query":"hello"}' }),
         LLMEvent.toolInputEnd({ id: "call-parsed", name: "web_search" }),
         hostedCall("call-parsed", "hello"),
-        LLMEvent.stepFinish({ index: 0, reason: "stop" }),
-        LLMEvent.finish({ reason: "stop" }),
+        LLMEvent.stepFinish({ index: 0, reason: { normalized: "stop" } }),
+        LLMEvent.finish({ reason: { normalized: "stop" } }),
       ]
 
       yield* session.resume(sessionID)

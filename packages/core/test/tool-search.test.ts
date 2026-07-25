@@ -8,6 +8,7 @@ import { LayerNode } from "@opencode-ai/util/effect/layer-node"
 import { FileSystem } from "@opencode-ai/core/filesystem"
 import { FSUtil } from "@opencode-ai/util/fs-util"
 import { Location } from "@opencode-ai/core/location"
+import { LocationMutation } from "@opencode-ai/core/location-mutation"
 import { PermissionV2 } from "@opencode-ai/core/permission"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { AbsolutePath } from "@opencode-ai/core/schema"
@@ -19,32 +20,32 @@ import { ToolOutputStore } from "@opencode-ai/core/tool-output-store"
 import { location } from "./fixture/location"
 import { tmpdir } from "./fixture/tmpdir"
 import { testEffect } from "./lib/effect"
-import { executeTool, registerToolPlugin, settleTool, toolIdentity } from "./lib/tool"
+import { executeTool, registerToolPlugin, toolIdentity } from "./lib/tool"
 
 const globToolNode = makeLocationNode({
   name: "test/glob-tool-plugin",
   layer: Layer.effectDiscard(registerToolPlugin(GlobTool.Plugin)),
-  deps: [ToolRegistry.toolsNode, FSUtil.node, Ripgrep.node, Location.node, PermissionV2.node],
+  deps: [
+    ToolRegistry.toolsNode,
+    FSUtil.node,
+    Ripgrep.node,
+    Location.node,
+    LocationMutation.node,
+    PermissionV2.node,
+  ],
 })
 const grepToolNode = makeLocationNode({
   name: "test/grep-tool-plugin",
   layer: Layer.effectDiscard(registerToolPlugin(GrepTool.Plugin)),
   deps: [ToolRegistry.toolsNode, FSUtil.node, Ripgrep.node, Location.node, PermissionV2.node],
 })
-const permission = Layer.succeed(
-  PermissionV2.Service,
-  PermissionV2.Service.of({
-    assert: () => Effect.void,
-    ask: () => Effect.die("unused"),
-    reply: () => Effect.die("unused"),
-    get: () => Effect.die("unused"),
-    forSession: () => Effect.die("unused"),
-    list: () => Effect.die("unused"),
-  }),
-)
 const sessionID = SessionV2.ID.make("ses_search_tool_test")
 
-const withTools = <A, E, R>(directory: string, body: (registry: ToolRegistry.Interface) => Effect.Effect<A, E, R>) =>
+const withTools = <A, E, R>(
+  directory: string,
+  body: (registry: ToolRegistry.Interface) => Effect.Effect<A, E, R>,
+  assertions?: PermissionV2.AssertInput[],
+) =>
   Effect.gen(function* () {
     return yield* body(yield* ToolRegistry.Service)
   }).pipe(
@@ -54,7 +55,23 @@ const withTools = <A, E, R>(directory: string, body: (registry: ToolRegistry.Int
           Location.node,
           Layer.succeed(Location.Service, Location.Service.of(location({ directory: AbsolutePath.make(directory) }))),
         ],
-        [PermissionV2.node, permission],
+        [
+          PermissionV2.node,
+          Layer.succeed(
+            PermissionV2.Service,
+            PermissionV2.Service.of({
+              assert: (input) =>
+                Effect.sync(() => {
+                  assertions?.push(input)
+                }),
+              ask: () => Effect.die("unused"),
+              reply: () => Effect.die("unused"),
+              get: () => Effect.die("unused"),
+              forSession: () => Effect.die("unused"),
+              list: () => Effect.die("unused"),
+            }),
+          ),
+        ],
         [ToolOutputStore.node, ToolOutputStore.nodeWithoutConfig],
       ]),
     ),
@@ -83,15 +100,20 @@ describe("search tools", () => {
           )
           yield* withTools(tmp.path, (registry) =>
             Effect.gen(function* () {
-              const glob = yield* settleTool(registry, call("glob", { pattern: "*" }))
-              const grep = yield* settleTool(registry, call("grep", { pattern: "needle" }))
+              const glob = yield* executeTool(registry, call("glob", { pattern: "*" }))
+              const grep = yield* executeTool(registry, call("grep", { pattern: "needle" }))
 
-              expect(glob.output?.structured).toEqual({ count: FileSystem.DEFAULT_SEARCH_LIMIT })
-              expect(grep.output?.structured).toEqual({ matches: FileSystem.DEFAULT_SEARCH_LIMIT })
-              expect(glob.output?.content).toEqual([{ type: "text", text: String(glob.result.value) }])
-              expect(grep.output?.content).toEqual([{ type: "text", text: String(grep.result.value) }])
-              expect(String(glob.result.value).split("\n")).toHaveLength(FileSystem.DEFAULT_SEARCH_LIMIT)
-              expect(grep.result.value).toStartWith(`Found ${FileSystem.DEFAULT_SEARCH_LIMIT} matches\n`)
+              expect(glob.metadata).toEqual({ count: FileSystem.DEFAULT_SEARCH_LIMIT, truncated: true })
+              expect(grep.metadata).toEqual({ matches: FileSystem.DEFAULT_SEARCH_LIMIT })
+              expect(glob.content).toHaveLength(1)
+              expect(grep.content).toHaveLength(1)
+              const globText = glob.content?.[0]?.type === "text" ? glob.content[0].text : ""
+              const grepText = grep.content?.[0]?.type === "text" ? grep.content[0].text : ""
+              expect(globText.split("\n")).toHaveLength(FileSystem.DEFAULT_SEARCH_LIMIT + 2)
+              expect(globText).toEndWith(
+                `(Results are truncated: showing first ${FileSystem.DEFAULT_SEARCH_LIMIT} results. Consider using a more specific path or pattern.)`,
+              )
+              expect(grepText).toStartWith(`Found ${FileSystem.DEFAULT_SEARCH_LIMIT} matches\n`)
             }),
           )
         }),
@@ -110,11 +132,81 @@ describe("search tools", () => {
                 registry,
                 call(name, { path: "missing", pattern: name === "glob" ? "*" : "needle" }),
               )
-              expect(result).toEqual({ type: "error", value: "Search path does not exist: missing" })
+              expect(result).toEqual({
+                status: "error",
+                error: { type: "tool.execution", message: "Search path does not exist: missing" },
+              })
             }),
           ),
         (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
       ),
     )
   }
+
+  it.live("requires external_directory approval for an explicit external glob path", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        const assertions: PermissionV2.AssertInput[] = []
+        return Effect.promise(() => fs.writeFile(path.join(outside.path, "outside.txt"), "outside\n")).pipe(
+          Effect.andThen(
+            withTools(
+              active.path,
+              (registry) => executeTool(registry, call("glob", { path: outside.path, pattern: "*.txt" })),
+              assertions,
+            ),
+          ),
+          Effect.tap((result) =>
+            Effect.sync(() => {
+              expect(result.status).toBe("completed")
+              expect(assertions.map((input) => input.action)).toEqual(["external_directory", "glob"])
+              expect(assertions[0]?.resources).toEqual([
+                path.join(outside.path, "*").replaceAll("\\", "/"),
+              ])
+            }),
+          ),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
+
+  it.live("globs through an in-location external symlink without external approval", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      ([active, outside]) => {
+        if (process.platform === "win32") return Effect.void
+        const assertions: PermissionV2.AssertInput[] = []
+        return Effect.promise(async () => {
+          await fs.writeFile(path.join(outside.path, "outside.txt"), "outside\n")
+          await fs.symlink(outside.path, path.join(active.path, "linked"))
+        }).pipe(
+          Effect.andThen(
+            withTools(
+              active.path,
+              (registry) => executeTool(registry, call("glob", { path: "linked", pattern: "*.txt" })),
+              assertions,
+            ),
+          ),
+          Effect.tap((result) =>
+            Effect.sync(() => {
+              expect(result.status).toBe("completed")
+              expect(assertions.map((input) => input.action)).toEqual(["glob"])
+              expect(result).toMatchObject({
+                output: [{ path: path.join("linked", "outside.txt"), type: "file" }],
+                content: [{ type: "text", text: path.join(active.path, "linked", "outside.txt") }],
+              })
+            }),
+          ),
+        )
+      },
+      ([active, outside]) =>
+        Effect.promise(() =>
+          Promise.all([active[Symbol.asyncDispose](), outside[Symbol.asyncDispose]()]).then(() => undefined),
+        ),
+    ),
+  )
 })
