@@ -1,8 +1,7 @@
 {
   lib,
-  inputs,
-  pkgs,
   stdenv,
+  bun,
   nodejs_26,
   darwin,
   electron_41,
@@ -26,7 +25,7 @@ stdenv.mkDerivation (finalAttrs: {
     ;
 
   nativeBuildInputs = [
-    inputs.re-nixpkgs.packages.${pkgs.stdenv.hostPlatform.system}.bun-canary
+    bun
     nodejs_26
     makeWrapper
     writableTmpDirAsHomeHook
