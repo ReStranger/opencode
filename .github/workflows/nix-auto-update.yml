@@ -71,10 +71,6 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure binary cache
-        uses: cachix/cachix-action@v17
-        with:
-          name: re-nixpkgs
 
       - name: Compute node_modules hash
         id: hash

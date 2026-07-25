@@ -1,13 +1,6 @@
 {
   description = "OpenCode development flake";
 
-  nixConfig = {
-    extra-substituters = [ "https://re-nixpkgs.cachix.org" ];
-    extra-trusted-public-keys = [
-      "re-nixpkgs.cachix.org-1:yp0DeOCu+yrfJ3u3Ih9JopChk1MCKbkFvH2gMmzrOdw="
-    ];
-  };
-
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
