@@ -605,7 +605,7 @@ export type Endpoint5_26Output =
           readonly data: {
             readonly sessionID: Session.ID
             readonly assistantMessageID: SessionMessage.ID
-            readonly callID: string
+            readonly id: string
             readonly name: string
           }
         }
@@ -619,7 +619,7 @@ export type Endpoint5_26Output =
           readonly data: {
             readonly sessionID: Session.ID
             readonly assistantMessageID: SessionMessage.ID
-            readonly callID: string
+            readonly id: string
             readonly text: string
           }
         }
@@ -633,7 +633,7 @@ export type Endpoint5_26Output =
           readonly data: {
             readonly sessionID: Session.ID
             readonly assistantMessageID: SessionMessage.ID
-            readonly callID: string
+            readonly id: string
             readonly input: { readonly [x: string]: unknown }
             readonly executed: boolean
             readonly state?: SessionMessage.ProviderState | undefined
@@ -649,7 +649,7 @@ export type Endpoint5_26Output =
           readonly data: {
             readonly sessionID: Session.ID
             readonly assistantMessageID: SessionMessage.ID
-            readonly callID: string
+            readonly id: string
             readonly content: readonly [
               (
                 | { readonly type: "text"; readonly text: string }
@@ -685,7 +685,7 @@ export type Endpoint5_26Output =
           readonly data: {
             readonly sessionID: Session.ID
             readonly assistantMessageID: SessionMessage.ID
-            readonly callID: string
+            readonly id: string
             readonly error: { readonly type: string; readonly message: string; readonly status?: number | undefined }
             readonly content?:
               | readonly [
@@ -1502,18 +1502,25 @@ export interface ProjectCopyApi<E = never> {
 export type Endpoint25_0Input = {
   readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
 }
-export type Endpoint25_0Output = { readonly location: Location.Info; readonly data: ReadonlyArray<Vcs.FileStatus> }
-export type VcsStatusOperation<E = never> = (input?: Endpoint25_0Input) => Effect.Effect<Endpoint25_0Output, E>
+export type Endpoint25_0Output = { readonly location: Location.Info; readonly data: Vcs.Info }
+export type VcsGetOperation<E = never> = (input?: Endpoint25_0Input) => Effect.Effect<Endpoint25_0Output, E>
 
 export type Endpoint25_1Input = {
+  readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+}
+export type Endpoint25_1Output = { readonly location: Location.Info; readonly data: ReadonlyArray<Vcs.FileStatus> }
+export type VcsStatusOperation<E = never> = (input?: Endpoint25_1Input) => Effect.Effect<Endpoint25_1Output, E>
+
+export type Endpoint25_2Input = {
   readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
   readonly mode: Vcs.Mode
   readonly context?: number | undefined
 }
-export type Endpoint25_1Output = { readonly location: Location.Info; readonly data: ReadonlyArray<FileDiff.Info> }
-export type VcsDiffOperation<E = never> = (input: Endpoint25_1Input) => Effect.Effect<Endpoint25_1Output, E>
+export type Endpoint25_2Output = { readonly location: Location.Info; readonly data: ReadonlyArray<FileDiff.Info> }
+export type VcsDiffOperation<E = never> = (input: Endpoint25_2Input) => Effect.Effect<Endpoint25_2Output, E>
 
 export interface VcsApi<E = never> {
+  readonly get: VcsGetOperation<E>
   readonly status: VcsStatusOperation<E>
   readonly diff: VcsDiffOperation<E>
 }

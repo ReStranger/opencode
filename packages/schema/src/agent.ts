@@ -36,7 +36,7 @@ export const Info = Schema.Struct({
   .annotate({ identifier: "Agent.Info" })
   .pipe(
     statics(() => ({
-      empty: (id: ID) =>
+      default: (id: ID) =>
         ({
           id,
           name: Name.make(id),
@@ -46,6 +46,9 @@ export const Info = Schema.Struct({
           permissions: [
             { action: "*", resource: "*", effect: "allow" },
             { action: "external_directory", resource: "*", effect: "ask" },
+            { action: "read", resource: "*.env", effect: "ask" },
+            { action: "read", resource: "*.env.*", effect: "ask" },
+            { action: "read", resource: "*.env.example", effect: "allow" },
           ],
         }) satisfies Info,
     })),

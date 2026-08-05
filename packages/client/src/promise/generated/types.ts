@@ -297,7 +297,7 @@ export type FormExternalField = { key: string; type: "external"; url: string; ti
 
 export type FormValue = string | number | boolean | Array<string>
 
-export type PermissionSource = { type: "tool"; messageID: string; callID: string }
+export type PermissionSource = { type: "tool"; messageID: string; id: string }
 
 export type PermissionSavedInfo = { id: string; projectID: string; action: string; resource: string }
 
@@ -486,7 +486,7 @@ export type Pty = {
 
 export type QuestionOption = { label: string; description: string }
 
-export type QuestionTool = { messageID: string; callID: string }
+export type QuestionTool = { messageID: string; id: string }
 
 export type QuestionAnswer = Array<string>
 
@@ -529,6 +529,8 @@ export type ReferenceGitSource = {
 }
 
 export type ProjectCopyCopy = { directory: string }
+
+export type VcsBranch = { current?: string; default?: string }
 
 export type VcsFileStatus = {
   file: string
@@ -742,7 +744,7 @@ export type SessionToolInputStarted = {
   type: "session.tool.input.started"
   durable: { aggregateID: string; seq: number; version: 1 }
   location?: LocationRef
-  data: { sessionID: string; assistantMessageID: string; callID: string; name: string }
+  data: { sessionID: string; assistantMessageID: string; id: string; name: string }
 }
 
 export type SessionToolInputEnded = {
@@ -752,7 +754,7 @@ export type SessionToolInputEnded = {
   type: "session.tool.input.ended"
   durable: { aggregateID: string; seq: number; version: 1 }
   location?: LocationRef
-  data: { sessionID: string; assistantMessageID: string; callID: string; text: string }
+  data: { sessionID: string; assistantMessageID: string; id: string; text: string }
 }
 
 export type SessionCompactionAdmitted = {
@@ -913,7 +915,7 @@ export type SessionToolInputDelta = {
   metadata?: { [x: string]: any }
   type: "session.tool.input.delta"
   location?: LocationRef
-  data: { sessionID: string; assistantMessageID: string; callID: string; delta: string }
+  data: { sessionID: string; assistantMessageID: string; id: string; delta: string }
 }
 
 export type SessionToolProgress = {
@@ -922,7 +924,7 @@ export type SessionToolProgress = {
   metadata?: { [x: string]: any }
   type: "session.tool.progress"
   location?: LocationRef
-  data: { sessionID: string; assistantMessageID: string; callID: string; metadata: { [x: string]: JsonValue } }
+  data: { sessionID: string; assistantMessageID: string; id: string; metadata: { [x: string]: JsonValue } }
 }
 
 export type SessionCompactionDelta = {
@@ -1378,7 +1380,7 @@ export type SessionToolCalled = {
   data: {
     sessionID: string
     assistantMessageID: string
-    callID: string
+    id: string
     input: { [x: string]: any }
     executed: boolean
     state?: SessionMessageProviderState7
@@ -1745,6 +1747,8 @@ export type SessionStatus2 = {
 
 export type ReferenceSource = ReferenceLocalSource | ReferenceGitSource
 
+export type VcsInfo = { branch: VcsBranch }
+
 export type PermissionRuleset = Array<PermissionRule>
 
 export type SessionInfo = {
@@ -1827,7 +1831,7 @@ export type SessionToolSuccess = {
   data: {
     sessionID: string
     assistantMessageID: string
-    callID: string
+    id: string
     content: [ToolContent1, ...Array<ToolContent1>]
     metadata?: { [x: string]: JsonValue }
     executed: boolean
@@ -1845,7 +1849,7 @@ export type SessionToolFailed = {
   data: {
     sessionID: string
     assistantMessageID: string
-    callID: string
+    id: string
     error: SessionStructuredError
     content?: [ToolContent1, ...Array<ToolContent1>]
     metadata?: { [x: string]: JsonValue }
@@ -4468,7 +4472,7 @@ export type PermissionCreateInput = {
     readonly resources: ReadonlyArray<string>
     readonly save?: ReadonlyArray<string>
     readonly metadata?: { readonly [x: string]: JsonValue }
-    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly callID: string }
+    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly id: string }
     readonly agent?: string | null
   }["id"]
   readonly action: {
@@ -4477,7 +4481,7 @@ export type PermissionCreateInput = {
     readonly resources: ReadonlyArray<string>
     readonly save?: ReadonlyArray<string>
     readonly metadata?: { readonly [x: string]: JsonValue }
-    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly callID: string }
+    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly id: string }
     readonly agent?: string | null
   }["action"]
   readonly resources: {
@@ -4486,7 +4490,7 @@ export type PermissionCreateInput = {
     readonly resources: ReadonlyArray<string>
     readonly save?: ReadonlyArray<string>
     readonly metadata?: { readonly [x: string]: JsonValue }
-    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly callID: string }
+    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly id: string }
     readonly agent?: string | null
   }["resources"]
   readonly save?: {
@@ -4495,7 +4499,7 @@ export type PermissionCreateInput = {
     readonly resources: ReadonlyArray<string>
     readonly save?: ReadonlyArray<string>
     readonly metadata?: { readonly [x: string]: JsonValue }
-    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly callID: string }
+    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly id: string }
     readonly agent?: string | null
   }["save"]
   readonly metadata?: {
@@ -4504,7 +4508,7 @@ export type PermissionCreateInput = {
     readonly resources: ReadonlyArray<string>
     readonly save?: ReadonlyArray<string>
     readonly metadata?: { readonly [x: string]: JsonValue }
-    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly callID: string }
+    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly id: string }
     readonly agent?: string | null
   }["metadata"]
   readonly source?: {
@@ -4513,7 +4517,7 @@ export type PermissionCreateInput = {
     readonly resources: ReadonlyArray<string>
     readonly save?: ReadonlyArray<string>
     readonly metadata?: { readonly [x: string]: JsonValue }
-    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly callID: string }
+    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly id: string }
     readonly agent?: string | null
   }["source"]
   readonly agent?: {
@@ -4522,7 +4526,7 @@ export type PermissionCreateInput = {
     readonly resources: ReadonlyArray<string>
     readonly save?: ReadonlyArray<string>
     readonly metadata?: { readonly [x: string]: JsonValue }
-    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly callID: string }
+    readonly source?: { readonly type: "tool"; readonly messageID: string; readonly id: string }
     readonly agent?: string | null
   }["agent"]
 }
@@ -4901,6 +4905,17 @@ export type ProjectCopyRefreshInput = {
 }
 
 export type ProjectCopyRefreshOutput = void
+
+export type VcsGetInput = {
+  readonly location?: {
+    readonly location?: { readonly directory?: string | undefined; readonly workspace?: string | undefined } | undefined
+  }["location"]
+}
+
+export type VcsGetOutput = {
+  location: { directory: string; workspaceID?: string; project: { id: string; directory: string; canonical: string } }
+  data: VcsInfo
+}
 
 export type VcsStatusInput = {
   readonly location?: {
